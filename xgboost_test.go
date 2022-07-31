@@ -209,6 +209,18 @@ func BenchmarkXGBoostRegression(b *testing.B) {
 		_, err := res.Predict(vec)
 		assert.NoError(b, err)
 		_, err = res.Predict(&nilVec)
+	}
+}
+func BenchmarkXGBoostOptimized(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(&res)
+
+	nilVec := make(arboreal.SparseVector, 44)
+	for i := 0; i < b.N; i++ {
+		_, err := newRes.Predict(vec)
+		assert.NoError(b, err)
+		_, err = newRes.Predict(&nilVec)
 		assert.NoError(b, err)
 	}
 }
@@ -220,8 +232,9 @@ func BenchmarkXGBoostTree(b *testing.B) {
 	t0 := res.Learner.GradientBooster.(*arboreal.GBTModelOptimized).Trees[0]
 
 	for i := 0; i < b.N; i++ {
-		_, err := t0.Predict(vec)
+		res := t0.Predict(vec)
 		assert.NoError(b, err)
+		_ = res
 	}
 }
 
@@ -234,8 +247,9 @@ func BenchmarkXGBoostTreeConcurrent(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// guard <- struct{}{}
 		go func(sv arboreal.SparseVector) {
-			_, err := t0.Predict(vec)
+			res := t0.Predict(vec)
 			assert.NoError(b, err)
+			_ = res
 			// <-guard
 		}(*vec)
 	}
@@ -291,12 +305,11 @@ func BenchmarkXGBEndToEnd(b *testing.B) {
 	inputs := readCsvFile("testdata/mortgage_data.csv")
 	l := len(inputs)
 	// convert inputs to floats
-	floatInputs := make([][]float64, l)
+	floatInputs := make([][]float32, l)
 	for i, input := range inputs {
-		floatInputs[i] = make([]float64, len(input))
+		floatInputs[i] = make([]float32, len(input))
 		for j, v := range input {
-			floatInputs[i][j], err = strconv.ParseFloat(v, 64)
-			assert.NoError(b, err)
+			floatInputs[i][j] = float32(arboreal.MustNotError(strconv.ParseFloat(v, 32)))
 		}
 	}
 	for i := 0; i < b.N; i++ {
@@ -311,12 +324,11 @@ func BenchmarkXGBEndToEndConcurrent(b *testing.B) {
 	inputs := readCsvFile("testdata/mortgage_data.csv")
 	l := len(inputs)
 	// convert inputs to floats
-	floatInputs := make([][]float64, l)
+	floatInputs := make([][]float32, l)
 	for i, input := range inputs {
-		floatInputs[i] = make([]float64, len(input))
+		floatInputs[i] = make([]float32, len(input))
 		for j, v := range input {
-			floatInputs[i][j], err = strconv.ParseFloat(v, 64)
-			assert.NoError(b, err)
+			floatInputs[i][j] = float32(arboreal.MustNotError(strconv.ParseFloat(v, 32)))
 		}
 	}
 	for i := 0; i < b.N; i++ {
