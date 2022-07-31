@@ -6,26 +6,12 @@ package arboreal
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"strconv"
 
 	// "github.com/goccy/go-json"
 
 	"github.com/pkg/errors"
 )
-
-func NewGBDTFromXGBoostJSON(filename string) (xgboostSchema, error) {
-	var schema xgboostSchema
-	jsonIO, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return schema, errors.Wrapf(err, "failed to open %s", filename)
-	}
-	err = json.Unmarshal(jsonIO, &schema)
-	if err != nil {
-		return schema, errors.Wrapf(err, "couldn't unmarshal json")
-	}
-	return schema, nil
-}
 
 // custom JSON unmarshal for learner
 func (l *learner) UnmarshalJSON(b []byte) error {
@@ -34,7 +20,7 @@ func (l *learner) UnmarshalJSON(b []byte) error {
 		FeatureTypes      []featureType     `json:"feature_types,omitempty"`
 		GradientBooster   json.RawMessage   `json:"gradient_booster"`
 		LearnerModelParam learnerModelParam `json:"learner_model_param,omitempty"`
-		Objective         interface{}       `json:"objective"`
+		Objective         json.RawMessage   `json:"objective"`
 	}
 	if err := json.Unmarshal(b, &tmp); err != nil {
 		return err
@@ -42,9 +28,10 @@ func (l *learner) UnmarshalJSON(b []byte) error {
 	l.FeatureNames = tmp.FeatureNames
 	l.FeatureTypes = tmp.FeatureTypes
 	l.LearnerModelParam = tmp.LearnerModelParam
-	l.Objective = tmp.Objective
 	var err error
 	l.GradientBooster, err = parseGradientBooster(tmp.GradientBooster)
+	l.Objective, err = parseObjective(tmp.Objective)
+
 	if err != nil {
 		return errors.Wrapf(err, "failed to parse gradient booster")
 	}
@@ -155,14 +142,6 @@ func parseGradientBooster(msg json.RawMessage) (GradientBooster, error) {
 		if err := json.Unmarshal(msg, &gbtree); err != nil {
 			return nil, err
 		}
-		// create leaf vector to avoid a runtime comparison
-		// for idx, tree := range gbtree.Model.Trees {
-		// 	leaves := make([]bool, len(tree.SplitConditions))
-		// 	for i := range leaves {
-		// 		leaves[i] = (tree.LeftChildren[i] == -1) && (tree.RightChildren[i] == -1)
-		// 	}
-		// 	gbtree.Model.Trees[idx].Leaves = leaves
-		// }
 		optimized := OptimizedGBTModel(&gbtree.Model)
 		return optimized, nil
 	case "gblinear":
@@ -223,4 +202,29 @@ func OptimizedTree(in *tree) *TreeOptimized {
 	}
 	out.Nodes = nodes
 	return out
+}
+
+type Objective struct {
+	Name   string `json:"name"`
+	Params map[string]interface{}
+}
+
+func parseObjective(msg json.RawMessage) (Objective, error) {
+	var tmp struct {
+		Name          string      `json:"name"`
+		RegLossParams interface{} `json:"reg_loss_param"`
+	}
+	err := json.Unmarshal(msg, &tmp)
+	if err != nil {
+		return Objective{}, err
+	}
+	// TODO: this might be a map[string]string
+	var params map[string]interface{}
+	if tmp.RegLossParams != nil {
+		params = tmp.RegLossParams.(map[string]interface{})
+	}
+	return Objective{
+		Name:   tmp.Name,
+		Params: params,
+	}, nil
 }

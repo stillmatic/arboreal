@@ -41,7 +41,7 @@ type learner struct {
 	FeatureTypes      []featureType     `json:"feature_types,omitempty"`
 	GradientBooster   GradientBooster   `json:"gradient_booster"`
 	LearnerModelParam learnerModelParam `json:"learner_model_param,omitempty"`
-	Objective         interface{}       `json:"objective"`
+	Objective         Objective         `json:"objective"`
 }
 
 type learnerModelParam struct {

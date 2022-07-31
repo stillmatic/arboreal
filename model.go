@@ -1,48 +1,12 @@
 package arboreal
 
 import (
+	"encoding/json"
 	"fmt"
-	"math"
+	"io/ioutil"
 
 	"github.com/pkg/errors"
-	"golang.org/x/exp/constraints"
 )
-
-type SparseVector map[int]float64
-
-func max[T constraints.Ordered](a, b T) T {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func sigmoid(x []float64) []float64 {
-	for i, v := range x {
-		x[i] = sigmoidSingle(v)
-	}
-	return x
-}
-
-func sigmoidSingle(x float64) float64 {
-	return 1.0 / (1.0 + math.Exp(-x))
-}
-
-func softmax(ys []float64) []float64 {
-	output := make([]float64, len(ys))
-	var sum float64
-	for i, y := range ys {
-		exp := math.Exp(y)
-		sum += exp
-		output[i] = exp
-	}
-	if sum != 0.0 {
-		for i := range output {
-			output[i] /= sum
-		}
-	}
-	return output
-}
 
 func (m *xgboostSchema) Predict(features *SparseVector) ([]float64, error) {
 	internalResults, err := m.Learner.GradientBooster.Predict(features)
@@ -58,12 +22,38 @@ func (m *xgboostSchema) Predict(features *SparseVector) ([]float64, error) {
 			for j := 0; j < treesPerClass; j++ {
 				perClassScore[i] += internalResults[(i*treesPerClass)+j]
 			}
+			switch m.Learner.Objective.Name {
+			case "reg:squarederror":
+				perClassScore[i] += m.Learner.LearnerModelParam.BaseScore
+			}
 		}
 		// TODO: handle objective
-		return sigmoid(perClassScore), nil
+		switch m.Learner.Objective.Name {
+		case "reg:logistic", "binary:logistic":
+			return sigmoid(perClassScore), nil
+		case "multi:softmax":
+			return Softmax(perClassScore), nil
+		case "reg:squarederror":
+			return perClassScore, nil
+		default:
+			return nil, fmt.Errorf("unknown objective: %s", m.Learner.Objective)
+		}
 	case "gblinear":
 		return internalResults, nil
 	default:
 		return nil, fmt.Errorf("unknown gradient booster: %s", m.Learner.GradientBooster.GetName())
 	}
+}
+
+func NewGBDTFromXGBoostJSON(filename string) (xgboostSchema, error) {
+	var schema xgboostSchema
+	jsonIO, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return schema, errors.Wrapf(err, "failed to open %s", filename)
+	}
+	err = json.Unmarshal(jsonIO, &schema)
+	if err != nil {
+		return schema, errors.Wrapf(err, "couldn't unmarshal json")
+	}
+	return schema, nil
 }

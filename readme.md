@@ -1,8 +1,8 @@
-# go-gbdt
+# arboreal
+
+> (chiefly of animals) living in trees.
 
 Pure Go library for gradient boosted decision trees. The library is optimized for ease of use in a production web server, serving real-time inference requests. As a result, we do not support training models and eschew non-standard libaries for portability.
-
-My assumption is that the library is fast enough for any reasonable use case. If you find that it is not, please open an issue.
 
 # Why?
 

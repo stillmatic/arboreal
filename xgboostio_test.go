@@ -124,11 +124,31 @@ func TestToy(t *testing.T) {
 	}
 	res1 := arboreal.MustNotError(res.Predict(sv1))
 	assert.InDelta(t, 0.4694540577007751, res1[0], 0.01)
+}
 
+func TestRegression(t *testing.T) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/regression.json")
+	assert.NoError(t, err)
+	score, err := res.Predict(vec)
+	assert.NoError(t, err)
+	assert.InDelta(t, 8.417279, score[0], 0.01)
 }
 
 func BenchmarkXGBoost(b *testing.B) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+
+	nilVec := make(arboreal.SparseVector, 44)
+	for i := 0; i < b.N; i++ {
+		_, err := res.Predict(vec)
+		assert.NoError(b, err)
+		_, err = res.Predict(&nilVec)
+		assert.NoError(b, err)
+	}
+}
+
+func BenchmarkXGBoostRegression(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/regression.json")
 	assert.NoError(b, err)
 
 	nilVec := make(arboreal.SparseVector, 44)
