@@ -20,20 +20,32 @@ func (m *xgboostSchema) Predict(features *SparseVector) ([]float64, error) {
 		perClassScore := make([]float64, numClasses)
 		for i := 0; i < numClasses; i++ {
 			for j := 0; j < treesPerClass; j++ {
-				perClassScore[i] += internalResults[(i*treesPerClass)+j]
+				var idx int
+				// there has GOT to be a better way to do this
+				switch m.Learner.Objective.Name {
+				case "multi:softprob", "multi:softmax":
+					idx = i % numClasses
+				default:
+					idx = i*treesPerClass + j
+				}
+				perClassScore[i] += internalResults[idx]
 			}
 			switch m.Learner.Objective.Name {
-			case "reg:squarederror":
+			case "reg:squarederror", "reg:squaredlogerror", "reg:pseudohubererror":
+				// weirdly only applied to regression, not to binary classification
 				perClassScore[i] += m.Learner.LearnerModelParam.BaseScore
+			case "reg:logistic", "binary:logistic":
+				perClassScore[i] = sigmoidSingle(perClassScore[i])
 			}
 		}
-		// TODO: handle objective
+		// final post process
 		switch m.Learner.Objective.Name {
 		case "reg:logistic", "binary:logistic":
-			return sigmoid(perClassScore), nil
-		case "multi:softmax":
+			return perClassScore, nil
+		case "multi:softmax", "multi:softprob":
+			fmt.Println("softmax", perClassScore)
 			return Softmax(perClassScore), nil
-		case "reg:squarederror":
+		case "reg:squarederror", "reg:squaredlogerror", "reg:pseudohubererror":
 			return perClassScore, nil
 		default:
 			return nil, fmt.Errorf("unknown objective: %s", m.Learner.Objective)

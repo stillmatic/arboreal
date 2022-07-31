@@ -15,13 +15,6 @@ func max[T constraints.Ordered](a, b T) T {
 	return b
 }
 
-func sigmoid(x []float64) []float64 {
-	for i, v := range x {
-		x[i] = sigmoidSingle(v)
-	}
-	return x
-}
-
 func sigmoidSingle(x float64) float64 {
 	return 1.0 / (1.0 + math.Exp(-x))
 }

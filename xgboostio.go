@@ -30,10 +30,12 @@ func (l *learner) UnmarshalJSON(b []byte) error {
 	l.LearnerModelParam = tmp.LearnerModelParam
 	var err error
 	l.GradientBooster, err = parseGradientBooster(tmp.GradientBooster)
-	l.Objective, err = parseObjective(tmp.Objective)
-
 	if err != nil {
 		return errors.Wrapf(err, "failed to parse gradient booster")
+	}
+	l.Objective, err = parseObjective(tmp.Objective)
+	if err != nil {
+		return errors.Wrapf(err, "failed to parse objective")
 	}
 	return nil
 }

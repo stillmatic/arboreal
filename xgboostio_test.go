@@ -105,6 +105,7 @@ func TestToy(t *testing.T) {
 		13: 38,
 	}
 	res0 := arboreal.MustNotError(res.Predict(sv0))
+	t.Log((res0))
 	assert.InDelta(t, 0.4343974019963509, res0[0], 0.01)
 	sv1 := &arboreal.SparseVector{
 		0:  38,
@@ -123,6 +124,7 @@ func TestToy(t *testing.T) {
 		13: 38,
 	}
 	res1 := arboreal.MustNotError(res.Predict(sv1))
+	t.Log((res1))
 	assert.InDelta(t, 0.4694540577007751, res1[0], 0.01)
 }
 
@@ -132,6 +134,51 @@ func TestRegression(t *testing.T) {
 	score, err := res.Predict(vec)
 	assert.NoError(t, err)
 	assert.InDelta(t, 8.417279, score[0], 0.01)
+}
+
+func TestSoftprob(t *testing.T) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/toysoftmax.json")
+	assert.NoError(t, err)
+	smvec0 := &arboreal.SparseVector{
+		0:  25,
+		1:  2,
+		2:  226802,
+		3:  1,
+		4:  7,
+		5:  6,
+		6:  3,
+		7:  2,
+		8:  1,
+		9:  0,
+		10: 0,
+		11: 40,
+		12: 38,
+		13: 0,
+	}
+	score, err := res.Predict(smvec0)
+	assert.NoError(t, err)
+	assert.InDelta(t, 0.57720053, score[0], 0.01)
+	t.Log(score)
+	smvec1 := &arboreal.SparseVector{
+		0:  38,
+		1:  2,
+		2:  89814,
+		3:  11,
+		4:  9,
+		5:  4,
+		6:  0,
+		7:  4,
+		8:  1,
+		9:  0,
+		10: 0,
+		11: 50,
+		12: 38,
+		13: 0,
+	}
+	score, err = res.Predict(smvec1)
+	assert.NoError(t, err)
+	assert.InDelta(t, 0.40584144, score[0], 0.01)
+	t.Log(score)
 }
 
 func BenchmarkXGBoost(b *testing.B) {
