@@ -2,6 +2,8 @@ package arboreal
 
 import (
 	"fmt"
+
+	"github.com/pkg/errors"
 )
 
 type GradientBooster interface {
@@ -18,14 +20,7 @@ type GBLinear struct {
 
 func (m *GBLinear) Predict(features *SparseVector) ([]float64, error) {
 	var result []float64
-	// for idx, tree := range m.Model.Trees {
-	// 	res, err := tree.Predict(features)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	result[idx] = res
-	// }
-	return result, nil
+	return result, errors.New("not yet implemented")
 }
 
 func (m *GBLinear) GetName() string {
@@ -49,52 +44,53 @@ func (m *GBTree) GetName() string {
 	return m.Name
 }
 
+// DEPRECATED, use CPU cache optimized tree.
 func (t *tree) Predict(features *SparseVector) (float64, error) {
-	idx := 0
+	return 0, nil
+}
 
-	for {
-		if t.Leaves[idx] {
-			// splitConditions[idx] is return value for a leaf node
-			return t.SplitConditions[idx], nil
+func (m *xgboostSchema) Predict(features *SparseVector) ([]float64, error) {
+	internalResults, err := m.Learner.GradientBooster.Predict(features)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to predict with gradient booster")
+	}
+	switch m.Learner.GradientBooster.GetName() {
+	case "gbtree", "gbtree_optimized":
+		numClasses := max(m.Learner.LearnerModelParam.NumClass, 1)
+		treesPerClass := len(internalResults) / numClasses
+		perClassScore := make([]float64, numClasses)
+		for i := 0; i < numClasses; i++ {
+			for j := 0; j < treesPerClass; j++ {
+				var idx int
+				// there has GOT to be a better way to do this
+				switch m.Learner.Objective.Name {
+				case "multi:softprob", "multi:softmax":
+					idx = i % numClasses
+				default:
+					idx = i*treesPerClass + j
+				}
+				perClassScore[i] += internalResults[idx]
+			}
+			switch m.Learner.Objective.Name {
+			case "reg:squarederror", "reg:squaredlogerror", "reg:pseudohubererror":
+				// weirdly only applied to regression, not to binary classification
+				perClassScore[i] += m.Learner.LearnerModelParam.BaseScore
+			case "reg:logistic", "binary:logistic":
+				perClassScore[i] = sigmoidSingle(perClassScore[i])
+			}
 		}
-
-		leftChild := t.LeftChildren[idx]
-		// this is a fairly insane optimization
-		// but it's somehow a 10% speedup on M1 mac and safe with legal XGBoost
-		// https://github.com/dmlc/xgboost/pull/6127
-		rightChild := leftChild + 1
-
-		splitCol := t.SplitIndices[idx]
-		splitVal := t.SplitConditions[idx]
-		fval, ok := (*features)[splitCol]
-
-		// missing value behavior is determined by default left
-		if !ok {
-			if t.DefaultLeft[idx] == 1 {
-				idx = leftChild
-			} else {
-				idx = rightChild
-			}
-			continue
-		}
-		switch t.SplitType[idx] {
-		case 0:
-			// xgboost uses <, lightgbm uses <=
-			if fval < splitVal {
-				idx = leftChild
-			} else {
-				idx = rightChild
-			}
-		// handle categorical case
-		case 1:
-			// todo: doublecheck this
-			if int(fval) == t.Categories[idx] {
-				idx = rightChild
-			} else {
-				idx = leftChild
-			}
+		// final post process
+		switch m.Learner.Objective.Name {
+		case "multi:softmax", "multi:softprob":
+			return Softmax(perClassScore), nil
+		case "reg:logistic", "binary:logistic", "reg:squarederror", "reg:squaredlogerror", "reg:pseudohubererror":
+			return perClassScore, nil
 		default:
-			return 0, fmt.Errorf("unknown split type %d", t.SplitType[idx])
+			return nil, fmt.Errorf("unknown objective: %s", m.Learner.Objective)
 		}
+	case "gblinear":
+		return internalResults, nil
+	default:
+		return nil, fmt.Errorf("unknown gradient booster: %s", m.Learner.GradientBooster.GetName())
 	}
 }

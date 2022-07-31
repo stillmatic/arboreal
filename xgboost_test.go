@@ -1,6 +1,12 @@
 package arboreal_test
 
 import (
+	"bufio"
+	"encoding/csv"
+	"io"
+	"log"
+	"os"
+	"strconv"
 	"testing"
 
 	arboreal "github.com/stillmatic/arboreal"
@@ -256,5 +262,67 @@ func BenchmarkLoadXGBoost(b *testing.B) {
 		res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 		assert.NoError(b, err)
 		_ = res
+	}
+}
+
+func readCsvFile(filePath string) [][]string {
+	f, err := os.Open(filePath)
+	if err != nil {
+		log.Fatal("Unable to read input file "+filePath, err)
+	}
+	defer f.Close()
+
+	// Skip first row (line)
+	row1, _ := bufio.NewReader(f).ReadSlice('\n')
+	_, _ = f.Seek(int64(len(row1)), io.SeekStart)
+
+	csvReader := csv.NewReader(f)
+	records, err := csvReader.ReadAll()
+	if err != nil {
+		log.Fatal("Unable to parse file as CSV for "+filePath, err)
+	}
+
+	return records
+}
+
+func BenchmarkXGBEndToEnd(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+	inputs := readCsvFile("testdata/mortgage_data.csv")
+	l := len(inputs)
+	// convert inputs to floats
+	floatInputs := make([][]float64, l)
+	for i, input := range inputs {
+		floatInputs[i] = make([]float64, len(input))
+		for j, v := range input {
+			floatInputs[i][j], err = strconv.ParseFloat(v, 64)
+			assert.NoError(b, err)
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		vec := arboreal.SparseVectorFromArray(floatInputs[i%l])
+		res.Predict(&vec)
+	}
+}
+
+func BenchmarkXGBEndToEndConcurrent(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+	inputs := readCsvFile("testdata/mortgage_data.csv")
+	l := len(inputs)
+	// convert inputs to floats
+	floatInputs := make([][]float64, l)
+	for i, input := range inputs {
+		floatInputs[i] = make([]float64, len(input))
+		for j, v := range input {
+			floatInputs[i][j], err = strconv.ParseFloat(v, 64)
+			assert.NoError(b, err)
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		go func(i int) {
+			vec := arboreal.SparseVectorFromArray(floatInputs[i%l])
+			res.Predict(&vec)
+		}(i)
 	}
 }

@@ -4,6 +4,15 @@
 
 Pure Go library for gradient boosted decision trees. The library is optimized for ease of use in a production web server, serving real-time inference requests. As a result, we do not support training models and eschew non-standard libaries for portability.
 
+# Usage
+
+```go
+res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/regression.json")
+inpArr := []float64{0.1, 0.2, 0.3, 0.4, 0.5}
+inpVec := arboreal.SparseVectorFromArray(inpArr)
+res.Predict(inpVec)
+```
+
 # Why?
 
 Go is a great language for backend development, especially for web-facing apps. However, it is not a great language for machine learning. Machine learning and data science deal with messy data and benefit from the comparative flexibility of Python. Building models in Python is easy, but serving them is not particularly quick - Python's GIL and weak concurrency model make it difficult to serve many requests at high throughput.
@@ -15,8 +24,10 @@ This library aims to solve that problem. It is a pure Go implementation of gradi
 These are fairly simplistic and not very scientific. They are intended to give a rough idea of the performance of the library. The model tested has 100 trees of depth 4.
 
 ```
-BenchmarkXGBoost-10                  	  201556	      5111 ns/op	    1813 B/op	       4 allocs/op
-BenchmarkXGBoostConcurrent-10        	 1812044	       660.5 ns/op	     952 B/op	       4 allocs/op
+
+BenchmarkXGBoost-10 201556 5111 ns/op 1813 B/op 4 allocs/op
+BenchmarkXGBoostConcurrent-10 1812044 660.5 ns/op 952 B/op 4 allocs/op
+
 ```
 
 The library is optimized for speed of inference. It takes ~5 microseconds to infer a row in a single-threaded setup and <1 microsecond in a concurrent setup. This benchmark is on my laptop and I encourage you to try your own.
@@ -30,16 +41,20 @@ It's a bit annoying to compare directly against XGBoost and other libraries. The
 We do not concurrently process each tree in the ensemble. Each tree is generally very fast - e.g. 11 nanoseconds for a tree of depth 4 in this benchmark, so the overhead of spawning a goroutine is not worth it. It is possible that your use case will be different, e.g. with lots of very deep trees. Similarly, even if you move the concurrency up to the model level, and run a goroutine per tree while summing the results with a channel, there is quite a lot of overhead that makes it much slower than the serial case.
 
 ```
-BenchmarkXGBoostTree-10              	111218052	        10.98 ns/op	       0 B/op	       0 allocs/op
-BenchmarkXGBoostTreeConcurrent-10    	 4676050	       247.3 ns/op	      48 B/op	       2 allocs/op
+
+BenchmarkXGBoostTree-10 111218052 10.98 ns/op 0 B/op 0 allocs/op
+BenchmarkXGBoostTreeConcurrent-10 4676050 247.3 ns/op 48 B/op 2 allocs/op
+
 ```
 
 But, like, we can absolutely tune the hell out of this if we want.
 
 ```
-BenchmarkXGBoost-10                  	  246240	      4803 ns/op	     844 B/op	       4 allocs/op
-BenchmarkXGBoostOptimized-10         	  252561	      4250 ns/op	      12 B/op	       2 allocs/op
-BenchmarkXGBoostConcurrent-10        	 2146634	       591.4 ns/op	     469 B/op	       4 allocs/op
+
+BenchmarkXGBoost-10 246240 4803 ns/op 844 B/op 4 allocs/op
+BenchmarkXGBoostOptimized-10 252561 4250 ns/op 12 B/op 2 allocs/op
+BenchmarkXGBoostConcurrent-10 2146634 591.4 ns/op 469 B/op 4 allocs/op
+
 ```
 
 Here, we've applied a few optimizations:

@@ -6,8 +6,6 @@ import (
 	"golang.org/x/exp/constraints"
 )
 
-type SparseVector map[int]float64
-
 func max[T constraints.Ordered](a, b T) T {
 	if a > b {
 		return a
