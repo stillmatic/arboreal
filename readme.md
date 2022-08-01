@@ -2,6 +2,8 @@
 
 > (chiefly of animals) living in trees.
 
+![arboreal logo](arboreal.png)
+
 Pure Go library for gradient boosted decision trees. The library is optimized for ease of use in a production web server, serving real-time inference requests. As a result, we do not support training models and eschew non-standard libaries for portability.
 
 # Usage
