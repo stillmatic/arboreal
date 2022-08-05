@@ -338,3 +338,44 @@ func BenchmarkXGBEndToEndConcurrent(b *testing.B) {
 		}(i)
 	}
 }
+
+func BenchmarkXGBEndToEndOptimized(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+	inputs := readCsvFile("testdata/mortgage_data.csv")
+	l := len(inputs)
+	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(&res)
+	// convert inputs to floats
+	floatInputs := make([][]float32, l)
+	for i, input := range inputs {
+		floatInputs[i] = make([]float32, len(input))
+		for j, v := range input {
+			floatInputs[i][j] = float32(arboreal.MustNotError(strconv.ParseFloat(v, 32)))
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		newRes.PredictFloats(floatInputs[i%l])
+	}
+}
+
+func BenchmarkXGBEndToEndOptimizedConcurrent(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+	inputs := readCsvFile("testdata/mortgage_data.csv")
+	l := len(inputs)
+	// convert inputs to floats
+	floatInputs := make([][]float32, l)
+	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(&res)
+
+	for i, input := range inputs {
+		floatInputs[i] = make([]float32, len(input))
+		for j, v := range input {
+			floatInputs[i][j] = float32(arboreal.MustNotError(strconv.ParseFloat(v, 32)))
+		}
+	}
+	for i := 0; i < b.N; i++ {
+		go func(i int) {
+			newRes.PredictFloats(floatInputs[i%l])
+		}(i)
+	}
+}

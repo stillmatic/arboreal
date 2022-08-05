@@ -28,11 +28,6 @@ func sigmoidSingleOpt(x float32) float32 {
 }
 
 func (m *OptimizedGBDTClassifier) Predict(features *SparseVector) ([]float32, error) {
-	// internalResults, err := m.Model.Predict(features)
-	// if err != nil {
-	// 	return nil, errors.Wrapf(err, "failed to predict with gradient booster")
-	// }
-
 	numClasses := max(m.NumClasses, 1)
 	treesPerClass := len(m.Model.Trees) / numClasses
 	perClassScore := make([]float32, numClasses)
@@ -40,6 +35,26 @@ func (m *OptimizedGBDTClassifier) Predict(features *SparseVector) ([]float32, er
 		offset := (i * treesPerClass)
 		for j := 0; j < treesPerClass; j++ {
 			perClassScore[i] += m.Model.Trees[offset+j].Predict(features)
+		}
+		perClassScore[i] = sigmoidSingleOpt(perClassScore[i])
+	}
+	// TODO: handle objective
+	return perClassScore, nil
+}
+
+func (m *OptimizedGBDTClassifier) PredictFloats(features []float32) ([]float32, error) {
+	sv := make(SparseVector, len(features))
+	for i, v := range features {
+		sv[i] = v
+	}
+
+	numClasses := max(m.NumClasses, 1)
+	treesPerClass := len(m.Model.Trees) / numClasses
+	perClassScore := make([]float32, numClasses)
+	for i := 0; i < numClasses; i++ {
+		offset := (i * treesPerClass)
+		for j := 0; j < treesPerClass; j++ {
+			perClassScore[i] += m.Model.Trees[offset+j].Predict(&sv)
 		}
 		perClassScore[i] = sigmoidSingleOpt(perClassScore[i])
 	}
