@@ -10,7 +10,7 @@ Pure Go library for gradient boosted decision trees. The library is optimized fo
 
 ```go
 res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/regression.json")
-inpArr := []float64{0.1, 0.2, 0.3, 0.4, 0.5}
+inpArr := []float32{0.1, 0.2, 0.3, 0.4, 0.5}
 inpVec := arboreal.SparseVectorFromArray(inpArr)
 res.Predict(inpVec)
 ```
@@ -25,14 +25,13 @@ This library aims to solve that problem. It is a pure Go implementation of gradi
 
 These are fairly simplistic and not very scientific. They are intended to give a rough idea of the performance of the library. The model tested has 100 trees of depth 4.
 
-```
-
-BenchmarkXGBoost-10 201556 5111 ns/op 1813 B/op 4 allocs/op
-BenchmarkXGBoostConcurrent-10 1812044 660.5 ns/op 952 B/op 4 allocs/op
-
-```
-
 The library is optimized for speed of inference. It takes ~5 microseconds to infer a row in a single-threaded setup and <1 microsecond in a concurrent setup. This benchmark is on my laptop and I encourage you to try your own.
+
+```
+BenchmarkXGBoost-10 196039 5223 ns/op 1829 B/op 4 allocs/op
+BenchmarkXGBoostConcurrent-10 793015 1496 ns/op 969 B/op 4 allocs/op
+BenchmarkLoadXGBoost-10 200 5957921 ns/op 1062448 B/op 17759 allocs/op
+```
 
 On loading: this benchmark shows ~6ms to load a small model, including SSD I/O. You can make it faster by swapping out the default JSON parser for a faster one, e.g. go-json. In my testing, that shows close to a 4x speedup to ~1.5ms. However, go-json shows a 50% greater use of memory, and I'm not sure why. In some cases, you may want to optimize for loading speed - e.g. if you are constantly swapping models (e.g. limited memory and want to use a single box to load lots of models). But in most cases, you don't really need to shave milliseconds off loading time and would prefer to use less memory.
 
@@ -61,7 +60,7 @@ BenchmarkXGBoostConcurrent-10 2146634 591.4 ns/op 469 B/op 4 allocs/op
 
 Here, we've applied a few optimizations:
 
-- `float32` instead of `float64`: XGBoost also uses single-precision floats, so this actually aligns us more closely with XGBoost's defaults. Both benchmarks above use this, it was just way easier to find/replace everywhere. This does make me a bit uncomfortable, as we're probably doing a bunch of back and forth translations, even with [math32](https://github.com/chewxy/math32).
+- `float32` instead of `float32`: XGBoost also uses single-precision floats, so this actually aligns us more closely with XGBoost's defaults. Both benchmarks above use this, it was just way easier to find/replace everywhere. This does make me a bit uncomfortable, as we're probably doing a bunch of back and forth translations, even with [math32](https://github.com/chewxy/math32).
 - Inlined tree predict functions: we used 'outlining' (splitting functions into smaller ones) to increase performance, at the cost of increasing the binary size. This is reasonable, given that the tree predict functions are absolutely in the hot path and called often.
 - Cache locality: XGBoost uses lists to represent its info, so you can represent a node as an integer index into each of its lists. The alternative is keeping a single list of structs which hold all of the info for a node. The latter is more efficient on modern architectures, as the data for a given node is stored close to each other, the CPU can also access it more quickly.
 - Move transformation code into the predict loops. This is actually quite a large improvement, since we're no longer allocating a slice of floats into the heap to pass to transformations. This is probably worth it, as it's a 10-15% speedup and something like a 99% reduction in memory overhead, at the cost of making the predict code uglier - need to handle all the cases instead of delegating.

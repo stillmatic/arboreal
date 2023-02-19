@@ -5,7 +5,6 @@ package arboreal
 
 import (
 	"encoding/json"
-	"fmt"
 	"strconv"
 
 	// "github.com/goccy/go-json"
@@ -38,97 +37,6 @@ func (l *learner) UnmarshalJSON(b []byte) error {
 		return errors.Wrapf(err, "failed to parse objective")
 	}
 	return nil
-}
-
-type GBTModelOptimized struct {
-	Trees []*TreeOptimized `json:"trees"`
-}
-
-type TreeOptimized struct {
-	Nodes []*NodeOptimized
-}
-
-type NodeOptimized struct {
-	CategoricalSize   int
-	Category          int
-	CategoriesNode    int
-	CategoriesSegment int
-	DefaultLeft       bool
-	LeftChild         int
-	RightChild        int
-	SplitCondition    float64
-	SplitIndex        int
-	SplitType         int
-	IsLeaf            bool
-}
-
-func (m *GBTModelOptimized) GetName() string {
-	return "gbtree_optimized"
-}
-
-func (m *GBTModelOptimized) Predict(features *SparseVector) ([]float64, error) {
-	result := make([]float64, len(m.Trees))
-
-	for idx, tree := range m.Trees {
-		res, err := tree.Predict(features)
-		if err != nil {
-			return nil, err
-		}
-		result[idx] = res
-	}
-	return result, nil
-}
-
-func (t *TreeOptimized) Predict(features *SparseVector) (float64, error) {
-	node := t.Nodes[0]
-
-	for {
-		if node.IsLeaf {
-			// splitConditions[idx] is return value for a leaf node
-			return node.SplitCondition, nil
-		}
-
-		leftChild := node.LeftChild
-		// this is a fairly insane optimization
-		// but it's somehow a 10% speedup on M1 mac and safe with legal XGBoost
-		// https://github.com/dmlc/xgboost/pull/6127
-		rightChild := leftChild + 1
-
-		splitCol := node.SplitIndex
-		splitVal := node.SplitCondition
-		fval, ok := (*features)[splitCol]
-
-		// missing value behavior is determined by default left
-		if !ok {
-			if node.DefaultLeft {
-				node = t.Nodes[leftChild]
-			} else {
-				node = t.Nodes[rightChild]
-			}
-			continue
-		}
-		switch node.SplitType {
-		case 0:
-			// xgboost uses <, lightgbm uses <=
-			if fval < splitVal {
-				node = t.Nodes[leftChild]
-
-			} else {
-				node = t.Nodes[rightChild]
-			}
-		// handle categorical case
-		case 1:
-			// todo: doublecheck this
-			if int(fval) == node.Category {
-				node = t.Nodes[rightChild]
-			} else {
-				node = t.Nodes[leftChild]
-
-			}
-		default:
-			return 0, fmt.Errorf("unknown split type %d", node.SplitType)
-		}
-	}
 }
 
 func parseGradientBooster(msg json.RawMessage) (GradientBooster, error) {
@@ -166,7 +74,7 @@ func (l *learnerModelParam) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &tmp); err != nil {
 		return err
 	}
-	l.BaseScore = MustNotError(strconv.ParseFloat(tmp.BaseScore, 64))
+	l.BaseScore = float32(MustNotError(strconv.ParseFloat(tmp.BaseScore, 64)))
 	l.NumClass = MustNotError(strconv.Atoi(tmp.NumClass))
 	l.NumFeature = MustNotError(strconv.Atoi(tmp.NumFeature))
 	return nil
@@ -193,7 +101,8 @@ func OptimizedTree(in *tree) *TreeOptimized {
 			SplitCondition: in.SplitConditions[i],
 			SplitIndex:     in.SplitIndices[i],
 			SplitType:      in.SplitType[i],
-			IsLeaf:         (in.LeftChildren[i] == -1) && (in.RightChildren[i] == -1),
+			// saves a lookup
+			IsLeaf: (in.LeftChildren[i] == -1) && (in.RightChildren[i] == -1),
 		}
 		if len(in.CategoricalSizes) > 0 {
 			nodes[i].CategoricalSize = in.CategoricalSizes[i]

@@ -45,7 +45,7 @@ type learner struct {
 }
 
 type learnerModelParam struct {
-	BaseScore  float64 `json:"base_score,omitempty"`
+	BaseScore  float32 `json:"base_score,omitempty"`
 	NumClass   int     `json:"num_class,omitempty"`
 	NumFeature int     `json:"num_feature,omitempty"`
 }
@@ -69,7 +69,7 @@ type softmaxMulticlassParam struct {
 }
 
 type tree struct {
-	// BaseWeights        []float64 `json:"base_weights"`
+	// BaseWeights        []float32 `json:"base_weights"`
 	CategoricalSizes   []int `json:"categorical_sizes,omitempty"`
 	Categories         []int `json:"categories"`
 	CategoriesNodes    []int `json:"categories_nodes"`
@@ -79,14 +79,14 @@ type tree struct {
 	ID              int       `json:"id,omitempty"`
 	LeftChildren    []int     `json:"left_children"`
 	RightChildren   []int     `json:"right_children"`
-	SplitConditions []float64 `json:"split_conditions"`
+	SplitConditions []float32 `json:"split_conditions"`
 	SplitIndices    []int     `json:"split_indices"`
 	SplitType       []int     `json:"split_type,omitempty"`
 	Leaves          []bool
 	// Parents         []int            `json:"parents"`
 	// TreeParam       treeTreeParam    `json:"tree_param"`
-	// SumHessian  []float64 `json:"sum_hessian"`
-	// LossChanges []float64 `json:"loss_changes"`
+	// SumHessian  []float32 `json:"sum_hessian"`
+	// LossChanges []float32 `json:"loss_changes"`
 }
 
 type treeInfoItem int

@@ -8,18 +8,18 @@ import (
 
 type GradientBooster interface {
 	GetName() string
-	Predict(features *SparseVector) ([]float64, error)
+	Predict(features *SparseVector) ([]float32, error)
 }
 
 type GBLinear struct {
 	Name  string `json:"name"`
 	Model struct {
-		Weights []float64 `json:"weights"`
+		Weights []float32 `json:"weights"`
 	} `json:"model"`
 }
 
-func (m *GBLinear) Predict(features *SparseVector) ([]float64, error) {
-	var result []float64
+func (m *GBLinear) Predict(features *SparseVector) ([]float32, error) {
+	var result []float32
 	return result, errors.New("not yet implemented")
 }
 
@@ -27,8 +27,8 @@ func (m *GBLinear) GetName() string {
 	return m.Name
 }
 
-func (m *GBTree) Predict(features *SparseVector) ([]float64, error) {
-	result := make([]float64, len(m.Model.Trees))
+func (m *GBTree) Predict(features *SparseVector) ([]float32, error) {
+	result := make([]float32, len(m.Model.Trees))
 
 	for idx, tree := range m.Model.Trees {
 		res, err := tree.Predict(features)
@@ -44,12 +44,11 @@ func (m *GBTree) GetName() string {
 	return m.Name
 }
 
-// DEPRECATED, use CPU cache optimized tree.
-func (t *tree) Predict(features *SparseVector) (float64, error) {
-	return 0, nil
+func (t *tree) Predict(features *SparseVector) (float32, error) {
+	return 0.0, nil
 }
 
-func (m *xgboostSchema) Predict(features *SparseVector) ([]float64, error) {
+func (m *xgboostSchema) Predict(features *SparseVector) ([]float32, error) {
 	internalResults, err := m.Learner.GradientBooster.Predict(features)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to predict with gradient booster")
@@ -58,7 +57,7 @@ func (m *xgboostSchema) Predict(features *SparseVector) ([]float64, error) {
 	case "gbtree", "gbtree_optimized":
 		numClasses := max(m.Learner.LearnerModelParam.NumClass, 1)
 		treesPerClass := len(internalResults) / numClasses
-		perClassScore := make([]float64, numClasses)
+		perClassScore := make([]float32, numClasses)
 		for i := 0; i < numClasses; i++ {
 			for j := 0; j < treesPerClass; j++ {
 				var idx int
