@@ -6,7 +6,7 @@ require (
 	github.com/chewxy/math32 v1.10.1
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.8.1
-	golang.org/x/exp v0.0.0-20230424174712-0ee363d48fb1
+	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842
 )
 
 require (
