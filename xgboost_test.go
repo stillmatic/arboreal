@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-var vec = &arboreal.SparseVector{
+var vec = arboreal.SparseVector{
 	0:  2016.0,
 	1:  1.0,
 	2:  480.0,
@@ -94,7 +94,7 @@ func TestXGBoostJson(t *testing.T) {
 func TestToy(t *testing.T) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/toy.json")
 	assert.NoError(t, err)
-	sv0 := &arboreal.SparseVector{
+	sv0 := arboreal.SparseVector{
 		0:  25,
 		1:  2,
 		2:  226802,
@@ -113,7 +113,7 @@ func TestToy(t *testing.T) {
 	res0 := arboreal.MustNotError(res.Predict(sv0))
 	t.Log((res0))
 	assert.InDelta(t, 0.4343974019963509, res0[0], 0.01)
-	sv1 := &arboreal.SparseVector{
+	sv1 := arboreal.SparseVector{
 		0:  38,
 		1:  2,
 		2:  89814,
@@ -145,7 +145,7 @@ func TestRegression(t *testing.T) {
 func TestSoftprob(t *testing.T) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/toysoftmax.json")
 	assert.NoError(t, err)
-	smvec0 := &arboreal.SparseVector{
+	smvec0 := arboreal.SparseVector{
 		0:  25,
 		1:  2,
 		2:  226802,
@@ -165,7 +165,7 @@ func TestSoftprob(t *testing.T) {
 	assert.NoError(t, err)
 	assert.InDelta(t, 0.57720053, score[0], 0.01)
 	t.Log(score)
-	smvec1 := &arboreal.SparseVector{
+	smvec1 := arboreal.SparseVector{
 		0:  38,
 		1:  2,
 		2:  89814,
@@ -195,7 +195,7 @@ func BenchmarkXGBoost(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := res.Predict(vec)
 		assert.NoError(b, err)
-		_, err = res.Predict(&nilVec)
+		_, err = res.Predict(nilVec)
 		assert.NoError(b, err)
 	}
 }
@@ -208,19 +208,19 @@ func BenchmarkXGBoostRegression(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, err := res.Predict(vec)
 		assert.NoError(b, err)
-		_, err = res.Predict(&nilVec)
+		_, err = res.Predict(nilVec)
 	}
 }
 func BenchmarkXGBoostOptimized(b *testing.B) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(b, err)
-	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(&res)
+	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(res)
 
 	nilVec := make(arboreal.SparseVector, 44)
 	for i := 0; i < b.N; i++ {
 		_, err := newRes.Predict(vec)
 		assert.NoError(b, err)
-		_, err = newRes.Predict(&nilVec)
+		_, err = newRes.Predict(nilVec)
 		assert.NoError(b, err)
 	}
 }
@@ -251,7 +251,7 @@ func BenchmarkXGBoostTreeConcurrent(b *testing.B) {
 			assert.NoError(b, err)
 			_ = res
 			// <-guard
-		}(*vec)
+		}(vec)
 	}
 }
 
@@ -266,7 +266,7 @@ func BenchmarkXGBoostConcurrent(b *testing.B) {
 			_, err := res.Predict(vec)
 			assert.NoError(b, err)
 			// <-guard
-		}(*vec)
+		}(vec)
 
 	}
 }
@@ -314,7 +314,7 @@ func BenchmarkXGBEndToEnd(b *testing.B) {
 	}
 	for i := 0; i < b.N; i++ {
 		vec := arboreal.SparseVectorFromArray(floatInputs[i%l])
-		res.Predict(&vec)
+		res.Predict(vec)
 	}
 }
 
@@ -334,7 +334,7 @@ func BenchmarkXGBEndToEndConcurrent(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		go func(i int) {
 			vec := arboreal.SparseVectorFromArray(floatInputs[i%l])
-			res.Predict(&vec)
+			res.Predict(vec)
 		}(i)
 	}
 }
@@ -344,7 +344,7 @@ func BenchmarkXGBEndToEndOptimized(b *testing.B) {
 	assert.NoError(b, err)
 	inputs := readCsvFile("testdata/mortgage_data.csv")
 	l := len(inputs)
-	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(&res)
+	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(res)
 	// convert inputs to floats
 	floatInputs := make([][]float32, l)
 	for i, input := range inputs {
@@ -365,7 +365,7 @@ func BenchmarkXGBEndToEndOptimizedConcurrent(b *testing.B) {
 	l := len(inputs)
 	// convert inputs to floats
 	floatInputs := make([][]float32, l)
-	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(&res)
+	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(res)
 
 	for i, input := range inputs {
 		floatInputs[i] = make([]float32, len(input))

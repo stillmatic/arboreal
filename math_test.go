@@ -1,6 +1,7 @@
 package arboreal_test
 
 import (
+	"github.com/viterin/vek/vek32"
 	"testing"
 
 	math "github.com/chewxy/math32"
@@ -26,6 +27,27 @@ func softmax(ys []float32) []float32 {
 		}
 	}
 	return output
+}
+
+func softmaxSimd(vector []float32) []float32 {
+	r := make([]float32, len(vector))
+	vek32.Exp_Into(r, vector)
+	sum := vek32.Sum(r)
+	if sum != float32(0.0) {
+		inverseSum := float32(1.0) / sum
+		vek32.MulNumber_Inplace(r, inverseSum)
+	}
+	return r
+}
+
+func softmaxSimdInplace(vector []float32) []float32 {
+	vek32.Exp_Inplace(vector)
+	sum := vek32.Sum(vector)
+	if sum != float32(0.0) {
+		inverseSum := float32(1.0) / sum
+		vek32.MulNumber_Inplace(vector, inverseSum)
+	}
+	return vector
 }
 
 func softmaxAlt(vector []float32) []float32 {
@@ -76,8 +98,14 @@ func (s *sigmoidTable) sigmoid(x float32) float32 {
 	return s.expTable[int((x+s.maxExp)*s.cache)]
 }
 
+// inplace SIMD saves an alloc and a couple nanoseconds but it's not a big difference.
+// BenchmarkSoftmax/softmax-10                   	10690101	       107.1 ns/op	      48 B/op	       1 allocs/op
+// BenchmarkSoftmax/softmaxAlt-10                	11185256	       107.5 ns/op	      48 B/op	       1 allocs/op
+// BenchmarkSoftmax/SIMD-10                      	10492280	       113.2 ns/op	      48 B/op	       1 allocs/op
+// BenchmarkSoftmax/SIMD_Inplace-10              	11581250	       103.2 ns/op	       0 B/op	       0 allocs/op
 func BenchmarkSoftmax(b *testing.B) {
 	vector := []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+	b.ResetTimer()
 	b.Run("softmax", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			arboreal.Softmax(vector)
@@ -86,6 +114,16 @@ func BenchmarkSoftmax(b *testing.B) {
 	b.Run("softmaxAlt", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			softmaxAlt(vector)
+		}
+	})
+	b.Run("SIMD", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			softmaxSimd(vector)
+		}
+	})
+	b.Run("SIMD_Inplace", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			softmaxSimdInplace(vector)
 		}
 	})
 }

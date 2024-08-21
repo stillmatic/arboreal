@@ -8,14 +8,6 @@ type aftLossParam struct {
 	AftLossDistributionScale string `json:"aft_loss_distribution_scale,omitempty"`
 }
 
-type categoricalSize int
-
-type categoriesNode int
-
-type categoriesSegment int
-
-type category int
-
 type featureName string
 
 type featureType string
@@ -26,9 +18,8 @@ type GBTree struct {
 }
 
 type gbtreeModelParam struct {
-	NumTrees string `json:"num_trees"`
-	// NumParallelTree string `json:"num_parallel_tree,omitempty"`
-	// SizeLeafVector  string `json:"size_leaf_vector"`
+	NumTrees        string `json:"num_trees"`
+	NumParallelTree string `json:"num_parallel_tree"`
 }
 
 type lambdaRankParam struct {
@@ -48,6 +39,7 @@ type learnerModelParam struct {
 	BaseScore  float32 `json:"base_score,omitempty"`
 	NumClass   int     `json:"num_class,omitempty"`
 	NumFeature int     `json:"num_feature,omitempty"`
+	NumTarget  int     `json:"num_target,omitempty"`
 }
 
 type model struct {
@@ -70,7 +62,7 @@ type softmaxMulticlassParam struct {
 
 type tree struct {
 	// BaseWeights        []float32 `json:"base_weights"`
-	CategoricalSizes   []int `json:"categorical_sizes,omitempty"`
+	CategoriesSizes    []int `json:"categories_sizes,omitempty"`
 	Categories         []int `json:"categories"`
 	CategoriesNodes    []int `json:"categories_nodes"`
 	CategoriesSegments []int `json:"categories_segments"`
@@ -97,13 +89,12 @@ type treeTreeParam struct {
 	SizeLeafVector string `json:"size_leaf_vector"`
 }
 
-type xgboostSchema struct {
+type XGBoostSchema struct {
 	Learner *learner `json:"learner"`
 	Version []int    `json:"version"`
 }
 
-type xgboostSchemaTreeParam struct {
-	NumFeature     string `json:"num_feature"`
-	NumNodes       string `json:"num_nodes"`
-	SizeLeafVector string `json:"size_leaf_vector"`
+type XGBoostSchemaTreeParam struct {
+	NumFeature string `json:"num_feature"`
+	NumNodes   string `json:"num_nodes"`
 }

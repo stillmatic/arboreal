@@ -8,7 +8,7 @@ import (
 
 type GradientBooster interface {
 	GetName() string
-	Predict(features *SparseVector) ([]float32, error)
+	Predict(features SparseVector) ([]float32, error)
 }
 
 type GBLinear struct {
@@ -18,7 +18,7 @@ type GBLinear struct {
 	} `json:"model"`
 }
 
-func (m *GBLinear) Predict(features *SparseVector) ([]float32, error) {
+func (m *GBLinear) Predict(features SparseVector) ([]float32, error) {
 	var result []float32
 	return result, errors.New("not yet implemented")
 }
@@ -27,7 +27,7 @@ func (m *GBLinear) GetName() string {
 	return m.Name
 }
 
-func (m *GBTree) Predict(features *SparseVector) ([]float32, error) {
+func (m *GBTree) Predict(features SparseVector) ([]float32, error) {
 	result := make([]float32, len(m.Model.Trees))
 
 	for idx, tree := range m.Model.Trees {
@@ -44,11 +44,11 @@ func (m *GBTree) GetName() string {
 	return m.Name
 }
 
-func (t *tree) Predict(features *SparseVector) (float32, error) {
+func (t *tree) Predict(features SparseVector) (float32, error) {
 	return 0.0, nil
 }
 
-func (m *xgboostSchema) Predict(features *SparseVector) ([]float32, error) {
+func (m *XGBoostSchema) Predict(features SparseVector) ([]float32, error) {
 	internalResults, err := m.Learner.GradientBooster.Predict(features)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to predict with gradient booster")

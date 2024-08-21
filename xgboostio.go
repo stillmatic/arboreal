@@ -104,8 +104,8 @@ func OptimizedTree(in *tree) *TreeOptimized {
 			// saves a lookup
 			IsLeaf: (in.LeftChildren[i] == -1) && (in.RightChildren[i] == -1),
 		}
-		if len(in.CategoricalSizes) > 0 {
-			nodes[i].CategoricalSize = in.CategoricalSizes[i]
+		if len(in.CategoriesSizes) > 0 {
+			nodes[i].CategoricalSize = in.CategoriesSizes[i]
 			nodes[i].Category = in.Categories[i]
 			nodes[i].CategoriesNode = in.CategoriesNodes[i]
 			nodes[i].CategoriesSegment = in.CategoriesSegments[i]

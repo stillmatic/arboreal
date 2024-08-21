@@ -7,7 +7,7 @@ type OptimizedGBDTClassifier struct {
 	NumClasses int
 }
 
-func NewOptimizedGBDTClassifierFromSchema(model *xgboostSchema) OptimizedGBDTClassifier {
+func NewOptimizedGBDTClassifierFromSchema(model *XGBoostSchema) OptimizedGBDTClassifier {
 	origModel := model.Learner.GradientBooster.(*GBTModelOptimized)
 	return OptimizedGBDTClassifier{
 		Model:      origModel,
@@ -27,12 +27,12 @@ func sigmoidSingleOpt(x float32) float32 {
 	return 1.0 / (1.0 + math.Exp(-x))
 }
 
-func (m *OptimizedGBDTClassifier) Predict(features *SparseVector) ([]float32, error) {
+func (m *OptimizedGBDTClassifier) Predict(features SparseVector) ([]float32, error) {
 	numClasses := max(m.NumClasses, 1)
 	treesPerClass := len(m.Model.Trees) / numClasses
 	perClassScore := make([]float32, numClasses)
 	for i := 0; i < numClasses; i++ {
-		offset := (i * treesPerClass)
+		offset := i * treesPerClass
 		for j := 0; j < treesPerClass; j++ {
 			perClassScore[i] += m.Model.Trees[offset+j].Predict(features)
 		}
@@ -54,7 +54,7 @@ func (m *OptimizedGBDTClassifier) PredictFloats(features []float32) ([]float32, 
 	for i := 0; i < numClasses; i++ {
 		offset := (i * treesPerClass)
 		for j := 0; j < treesPerClass; j++ {
-			perClassScore[i] += m.Model.Trees[offset+j].Predict(&sv)
+			perClassScore[i] += m.Model.Trees[offset+j].Predict(sv)
 		}
 		perClassScore[i] = sigmoidSingleOpt(perClassScore[i])
 	}
@@ -88,7 +88,7 @@ func (m *GBTModelOptimized) GetName() string {
 	return "gbtree_optimized"
 }
 
-func (m *GBTModelOptimized) Predict(features *SparseVector) ([]float32, error) {
+func (m *GBTModelOptimized) Predict(features SparseVector) ([]float32, error) {
 	result := make([]float32, len(m.Trees))
 
 	for idx, tree := range m.Trees {
@@ -98,7 +98,7 @@ func (m *GBTModelOptimized) Predict(features *SparseVector) ([]float32, error) {
 	return result, nil
 }
 
-func (t *TreeOptimized) predictCategorical(features *SparseVector) float32 {
+func (t *TreeOptimized) predictCategorical(features SparseVector) float32 {
 	idx := 0
 
 	for {
@@ -116,7 +116,7 @@ func (t *TreeOptimized) predictCategorical(features *SparseVector) float32 {
 
 		splitCol := node.SplitIndex
 		// splitVal := node.SplitCondition
-		fval, ok := (*features)[splitCol]
+		fval, ok := features[splitCol]
 
 		// missing value behavior is determined by default left
 		if !ok {
@@ -136,7 +136,7 @@ func (t *TreeOptimized) predictCategorical(features *SparseVector) float32 {
 	}
 }
 
-func (t *TreeOptimized) predictNumerical(features *SparseVector) float32 {
+func (t *TreeOptimized) predictNumerical(features SparseVector) float32 {
 	idx := 0
 	for {
 		node := t.Nodes[idx]
@@ -153,7 +153,7 @@ func (t *TreeOptimized) predictNumerical(features *SparseVector) float32 {
 
 		splitCol := node.SplitIndex
 		splitVal := node.SplitCondition
-		fval, ok := (*features)[splitCol]
+		fval, ok := features[splitCol]
 
 		// missing value behavior is determined by default left
 		if !ok {
@@ -173,7 +173,7 @@ func (t *TreeOptimized) predictNumerical(features *SparseVector) float32 {
 	}
 }
 
-func (t *TreeOptimized) Predict(features *SparseVector) float32 {
+func (t *TreeOptimized) Predict(features SparseVector) float32 {
 	if t.Nodes[0].SplitType == 1 {
 		return t.predictCategorical(features)
 	} else {
