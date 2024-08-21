@@ -75,9 +75,9 @@ func (l *learnerModelParam) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &tmp); err != nil {
 		return err
 	}
-	l.BaseScore = float32(MustNotError(strconv.ParseFloat(tmp.BaseScore, 64)))
-	l.NumClass = MustNotError(strconv.Atoi(tmp.NumClass))
-	l.NumFeature = MustNotError(strconv.Atoi(tmp.NumFeature))
+	l.BaseScore = float32(mustNotError(strconv.ParseFloat(tmp.BaseScore, 64)))
+	l.NumClass = mustNotError(strconv.Atoi(tmp.NumClass))
+	l.NumFeature = mustNotError(strconv.Atoi(tmp.NumFeature))
 	return nil
 }
 
