@@ -1,12 +1,12 @@
 module github.com/stillmatic/arboreal
 
-go 1.18
+go 1.21
 
 require (
-	github.com/chewxy/math32 v1.10.1
+	github.com/chewxy/math32 v1.11.0
 	github.com/pkg/errors v0.9.1
-	github.com/stretchr/testify v1.8.1
-	golang.org/x/exp v0.0.0-20230424174712-0ee363d48fb1
+	github.com/stretchr/testify v1.9.0
+	golang.org/x/exp v0.0.0-20240808152545-0cdaa3abc0fa
 )
 
 require (
