@@ -1,3 +1,4 @@
+// Package arboreal is a pure Go package for XGBoost model inference.
 package arboreal
 
 import (

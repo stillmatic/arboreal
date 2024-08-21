@@ -1,7 +1,8 @@
+package arboreal
+
 // IO for XGBoost JSON files
 // see https://xgboost.readthedocs.io/en/latest/tutorials/saving_model.html
 // https://github.com/dmlc/xgboost/blob/24c237308097b693b744af2ad1f86f44be068523/demo/json-model/json_parser.py
-package arboreal
 
 import (
 	"encoding/json"
@@ -12,7 +13,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-// custom JSON unmarshal for learner
+// UnmarshalJSON is a custom JSON unmarshal for learner
 func (l *learner) UnmarshalJSON(b []byte) error {
 	var tmp struct {
 		FeatureNames      []featureName     `json:"feature_names,omitempty"`

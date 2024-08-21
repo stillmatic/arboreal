@@ -8,6 +8,10 @@ Pure Go library for gradient boosted decision trees. The library is optimized fo
 
 # Usage
 
+```bash
+go get github.com/stillmatic/arboreal
+```
+
 ```go
 res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/regression.json")
 inpArr := []float32{0.1, 0.2, 0.3, 0.4, 0.5}
