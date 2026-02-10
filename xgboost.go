@@ -91,27 +91,27 @@ func (m *XGBoostSchema) Predict(features SparseVector) ([]float32, error) {
 	}
 }
 
-// PredictDense runs inference using a dense feature vector (no map overhead).
-// Missing features should be set to NaN.
+// PredictDense runs inference using a dense feature vector (SoA trees, no map overhead).
+// Missing features should be set to NaN. Uses a fused loop: tree prediction,
+// per-class accumulation, and objective transform happen in one pass with no
+// intermediate []float32 allocation for tree results.
 func (m *XGBoostSchema) PredictDense(features []float32) ([]float32, error) {
 	booster, ok := m.Learner.GradientBooster.(*GBTModelOptimized)
 	if !ok {
 		return nil, fmt.Errorf("PredictDense requires gbtree model, got %s", m.Learner.GradientBooster.GetName())
 	}
 
-	internalResults := booster.PredictDense(features)
-
 	numClasses := m.Learner.LearnerModelParam.NumClass
 	if numClasses < 1 {
 		numClasses = 1
 	}
-	treesPerClass := len(internalResults) / numClasses
+	treesPerClass := len(booster.Trees) / numClasses
 	perClassScore := make([]float32, numClasses)
 
 	if m.multiclass {
 		for i := 0; i < numClasses; i++ {
 			for j := 0; j < treesPerClass; j++ {
-				perClassScore[i] += internalResults[j*numClasses+i]
+				perClassScore[i] += booster.Trees[j*numClasses+i].PredictDense(features)
 			}
 			perClassScore[i] = m.perScore(perClassScore[i])
 		}
@@ -119,7 +119,41 @@ func (m *XGBoostSchema) PredictDense(features []float32) ([]float32, error) {
 		for i := 0; i < numClasses; i++ {
 			offset := i * treesPerClass
 			for j := 0; j < treesPerClass; j++ {
-				perClassScore[i] += internalResults[offset+j]
+				perClassScore[i] += booster.Trees[offset+j].PredictDense(features)
+			}
+			perClassScore[i] = m.perScore(perClassScore[i])
+		}
+	}
+
+	return m.postProcess(perClassScore), nil
+}
+
+// PredictDenseAoS runs inference using the compact AoS tree layout.
+// Same fused loop as PredictDense but with AoS cache locality.
+func (m *XGBoostSchema) PredictDenseAoS(features []float32) ([]float32, error) {
+	if m.ModelAoS == nil {
+		return nil, fmt.Errorf("PredictDenseAoS: no AoS model loaded")
+	}
+
+	numClasses := m.Learner.LearnerModelParam.NumClass
+	if numClasses < 1 {
+		numClasses = 1
+	}
+	treesPerClass := len(m.ModelAoS.Trees) / numClasses
+	perClassScore := make([]float32, numClasses)
+
+	if m.multiclass {
+		for i := 0; i < numClasses; i++ {
+			for j := 0; j < treesPerClass; j++ {
+				perClassScore[i] += m.ModelAoS.Trees[j*numClasses+i].PredictDense(features)
+			}
+			perClassScore[i] = m.perScore(perClassScore[i])
+		}
+	} else {
+		for i := 0; i < numClasses; i++ {
+			offset := i * treesPerClass
+			for j := 0; j < treesPerClass; j++ {
+				perClassScore[i] += m.ModelAoS.Trees[offset+j].PredictDense(features)
 			}
 			perClassScore[i] = m.perScore(perClassScore[i])
 		}

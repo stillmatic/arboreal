@@ -7,7 +7,8 @@ import (
 )
 
 // NewGBDTFromXGBoostJSON loads an XGBoost model from a JSON file and resolves
-// the objective into function pointers for fast prediction.
+// the objective into function pointers for fast prediction. Builds both SoA
+// and AoS tree representations for benchmarking.
 func NewGBDTFromXGBoostJSON(filename string) (*XGBoostSchema, error) {
 	jsonIO, err := os.ReadFile(filename)
 	if err != nil {
@@ -24,6 +25,12 @@ func NewGBDTFromXGBoostJSON(filename string) (*XGBoostSchema, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve objective: %w", err)
+	}
+
+	// Build AoS model from the raw parsed trees (kept during unmarshal).
+	if schema.Learner.rawModel != nil {
+		schema.ModelAoS = OptimizedGBTModelAoS(schema.Learner.rawModel)
+		schema.Learner.rawModel = nil // release parsed tree data
 	}
 
 	return &schema, nil

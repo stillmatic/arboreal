@@ -27,7 +27,7 @@ func (l *learner) UnmarshalJSON(b []byte) error {
 	l.LearnerModelParam = tmp.LearnerModelParam
 
 	var err error
-	l.GradientBooster, err = parseGradientBooster(tmp.GradientBooster)
+	l.GradientBooster, l.rawModel, err = parseGradientBooster(tmp.GradientBooster)
 	if err != nil {
 		return fmt.Errorf("failed to parse gradient booster: %w", err)
 	}
@@ -38,29 +38,29 @@ func (l *learner) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func parseGradientBooster(msg json.RawMessage) (GradientBooster, error) {
+func parseGradientBooster(msg json.RawMessage) (GradientBooster, *model, error) {
 	var tmp struct {
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(msg, &tmp); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	switch tmp.Name {
 	case "gbtree":
 		var gbtree GBTree
 		if err := json.Unmarshal(msg, &gbtree); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		optimized := OptimizedGBTModel(&gbtree.Model)
-		return optimized, nil
+		return optimized, &gbtree.Model, nil
 	case "gblinear":
 		var gblinear GBLinear
 		if err := json.Unmarshal(msg, &gblinear); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return &gblinear, nil
+		return &gblinear, nil, nil
 	}
-	return nil, fmt.Errorf("unknown gradient booster: %s", tmp.Name)
+	return nil, nil, fmt.Errorf("unknown gradient booster: %s", tmp.Name)
 }
 
 // UnmarshalJSON for learnerModelParam handles the string-to-number conversion

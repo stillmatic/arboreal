@@ -228,6 +228,33 @@ func TestPredictDenseRegression(t *testing.T) {
 	}
 }
 
+// TestPredictDenseAoS verifies AoS matches SoA dense prediction.
+func TestPredictDenseAoS(t *testing.T) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(t, err)
+
+	soaResult := mustNotError(res.PredictDense(vecDense))
+	aosResult := mustNotError(res.PredictDenseAoS(vecDense))
+
+	assert.Equal(t, len(soaResult), len(aosResult))
+	for i := range soaResult {
+		assert.InDelta(t, soaResult[i], aosResult[i], 0.0001,
+			"SoA vs AoS mismatch at index %d", i)
+	}
+}
+
+func TestPredictDenseAoSRegression(t *testing.T) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/regression.json")
+	assert.NoError(t, err)
+
+	soaResult := mustNotError(res.PredictDense(vecDense))
+	aosResult := mustNotError(res.PredictDenseAoS(vecDense))
+
+	for i := range soaResult {
+		assert.InDelta(t, soaResult[i], aosResult[i], 0.0001)
+	}
+}
+
 // --- Benchmarks ---
 
 // BenchmarkXGBoost benchmarks the full sparse prediction pipeline.
@@ -301,6 +328,33 @@ func BenchmarkXGBoostTreeDense(b *testing.B) {
 	}
 }
 
+// BenchmarkXGBoostDenseAoS benchmarks the AoS dense prediction pipeline.
+func BenchmarkXGBoostDenseAoS(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := res.PredictDenseAoS(vecDense)
+		assert.NoError(b, err)
+		_, err = res.PredictDenseAoS(nilVecDense)
+		assert.NoError(b, err)
+	}
+}
+
+// BenchmarkXGBoostTreeDenseAoS benchmarks a single AoS tree with dense input.
+func BenchmarkXGBoostTreeDenseAoS(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+
+	t0 := &res.ModelAoS.Trees[0]
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = t0.PredictDense(vecDense)
+	}
+}
+
 func BenchmarkLoadXGBoost(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
@@ -365,5 +419,24 @@ func BenchmarkXGBEndToEndDense(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		res.PredictDense(floatInputs[i%l])
+	}
+}
+
+// BenchmarkXGBEndToEndDenseAoS benchmarks AoS dense prediction over CSV data.
+func BenchmarkXGBEndToEndDenseAoS(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+	inputs := readCsvFile("testdata/mortgage_data.csv")
+	l := len(inputs)
+	floatInputs := make([][]float32, l)
+	for i, input := range inputs {
+		floatInputs[i] = make([]float32, len(input))
+		for j, v := range input {
+			floatInputs[i][j] = float32(mustNotError(strconv.ParseFloat(v, 32)))
+		}
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res.PredictDenseAoS(floatInputs[i%l])
 	}
 }

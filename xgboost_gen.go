@@ -22,6 +22,10 @@ type learner struct {
 	GradientBooster   GradientBooster   `json:"gradient_booster"`
 	LearnerModelParam learnerModelParam `json:"learner_model_param,omitempty"`
 	Objective         Objective         `json:"objective"`
+
+	// rawModel is kept temporarily after unmarshal so NewGBDTFromXGBoostJSON
+	// can build both SoA and AoS representations from the same parsed data.
+	rawModel *model
 }
 
 type learnerModelParam struct {
@@ -61,4 +65,7 @@ type XGBoostSchema struct {
 	perScore    perScoreFn
 	postProcess postProcessFn
 	multiclass  bool
+
+	// AoS model for benchmarking comparison (built alongside SoA at load time)
+	ModelAoS *GBTModelAoS
 }

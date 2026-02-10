@@ -3,149 +3,188 @@
 Benchmark environment: `INTEL(R) XEON(R) PLATINUM 8581C CPU @ 2.10GHz`, `linux/amd64`, Go 1.21.
 All numbers are median of 5 runs with `-benchmem`.
 
-## Summary
+## 3-Way Comparison: Original → SoA → Compact AoS
 
-| Benchmark | Before | After (sparse) | After (dense) | Speedup |
-|-----------|--------|-----------------|---------------|---------|
-| Single tree traversal | 35.3 ns | 31.5 ns | **13.4 ns** | 2.6x (dense) |
-| Full pipeline (100 trees) | 6505 ns | 5721 ns | **3616 ns** | 1.8x (dense) |
-| End-to-end CSV data | 8817 ns | 7661 ns | **3044 ns** | 2.9x (dense) |
-| Model loading | 8.98 ms / 852 KB / 6587 allocs | 8.58 ms / 691 KB / 4459 allocs | — | 19% less memory, 32% fewer allocs |
+Three layouts tested, all with dense `[]float32` input and fused predict loops:
 
-## What Changed
+| Benchmark | Original (ptr AoS, sparse) | SoA Dense | Compact AoS Dense |
+|-----------|---------------------------|-----------|-------------------|
+| **Single tree** | 35.3 ns | 13.7 ns | **13.0 ns** |
+| **Full pipeline** (100 trees) | 6505 ns / 845 B / 4 allocs | **2792 ns / 8 B / 2 allocs** | 3101 ns / 8 B / 2 allocs |
+| **End-to-end** (CSV data) | 8817 ns / 1674 B / 6 allocs | **2552 ns / 4 B / 1 alloc** | 3085 ns / 4 B / 1 alloc |
+| **Model loading** | 8.98 ms / 852 KB / 6587 allocs | 8.37 ms / 752 KB / 4561 allocs | (same load, builds both) |
 
-### 1. Struct-of-arrays tree layout
+### Key finding: AoS wins per-tree, SoA wins the ensemble
 
-Before: `[]*NodeOptimized` — a slice of pointers to 80-byte structs scattered across the heap.
+At the **single tree** level, compact AoS is ~5% faster (13.0 vs 13.7 ns). All node
+fields are colocated — one struct load gets everything the traversal needs. This
+validates the original cache locality rationale.
+
+But at the **100-tree ensemble** level, SoA is ~10% faster (2792 vs 3101 ns). Why?
+Per-tree memory footprint. For 127 nodes:
+
+| Layout | Hot data per tree | Total for 100 trees |
+|--------|------------------|---------------------|
+| SoA | ~1.6 KB (4 separate arrays) | ~160 KB |
+| Compact AoS | ~3.0 KB (one node array) | ~300 KB |
+
+Both fit in L2 (2 MB on this Xeon), but SoA's smaller footprint means less cache
+pressure when iterating across 100 different trees. Each SoA array (e.g., `SplitCondition`,
+508 bytes for 127 nodes) fits in ~8 cache lines, so after the first node access in a tree,
+subsequent accesses to the same field are likely L1 hits.
+
+The AoS struct is 24 bytes/node, so a 64-byte cache line holds ~2.7 nodes. Tree
+traversal follows a path through ~7 nodes at scattered indices. With the larger total
+footprint, the AoS version sees more L2 misses as it moves between trees.
+
+## What Changed (from original)
+
+### 1. Data layout: pointer AoS → value SoA (primary) + compact AoS (comparison)
+
+**Original**: `[]*NodeOptimized` — 80-byte structs, each a separate heap allocation.
+Despite the AoS *intent* for cache locality, the pointer indirection scattered nodes
+across the heap, defeating the optimization.
 
 ```go
+// Original: 80 bytes/node, pointer per node
 type NodeOptimized struct {
-    CategoricalSize   int       // 8 bytes
-    Category          int       // 8 bytes
-    CategoriesNode    int       // 8 bytes
-    CategoriesSegment int       // 8 bytes
+    CategoricalSize   int       // 8 bytes ← cold, always loaded
+    Category          int       // 8 bytes ← cold, always loaded
+    CategoriesNode    int       // 8 bytes ← cold, always loaded
+    CategoriesSegment int       // 8 bytes ← cold, always loaded
     LeftChild         int       // 8 bytes
     RightChild        int       // 8 bytes
     SplitIndex        int       // 8 bytes
     SplitType         int       // 8 bytes
     SplitCondition    float32   // 4 bytes
-    DefaultLeft       bool      // 1 byte + padding
-    IsLeaf            bool      // 1 byte + padding
+    DefaultLeft       bool      // 1 byte + 3 padding
+    IsLeaf            bool      // 1 byte + 7 padding
 }
-// Total: 80 bytes per node, pointer-chasing to reach each one
 ```
 
-After: struct-of-arrays with `int32` fields, contiguous memory per field.
+**SoA**: Separate contiguous arrays per field. `int32` fields halve index memory.
+Categorical arrays only allocated when the tree has categorical splits.
 
 ```go
 type TreeOptimized struct {
-    LeftChild      []int32     // hot path
+    LeftChild      []int32     // 508 bytes for 127 nodes
     RightChild     []int32
-    SplitIndex     []int32     // hot path
-    SplitCondition []float32   // hot path
-    DefaultLeft    []bool      // hot path
-    SplitType      []uint8     // cold (only if categorical)
-    Category       []int32     // cold (only if categorical)
+    SplitIndex     []int32
+    SplitCondition []float32
+    DefaultLeft    []bool      // 127 bytes
+    SplitType      []uint8     // nil if no categorical
+    Category       []int32     // nil if no categorical
     HasCategorical bool
 }
 ```
 
-For a tree with 127 nodes, the hot-path arrays (`LeftChild`, `SplitIndex`, `SplitCondition`, `DefaultLeft`) total ~1.6 KB of contiguous memory vs ~10 KB of scattered node structs. Categorical fields are only allocated when the tree actually has categorical splits.
+**Compact AoS**: 24-byte value struct in a contiguous slice. Preserves the
+single-dereference-per-node pattern from the original.
+
+```go
+type NodeAoS struct {
+    SplitCondition float32  // 4 bytes
+    LeftChild      int32    // 4 bytes
+    SplitIndex     int32    // 4 bytes
+    RightChild     int32    // 4 bytes
+    Category       int32    // 4 bytes
+    DefaultLeft    bool     // 1 byte
+    IsLeaf         bool     // 1 byte
+    SplitType      uint8    // 1 byte
+    // 1 byte padding → 24 bytes total
+}
+```
 
 ### 2. Dense `[]float32` prediction path
 
-Before: all prediction went through `SparseVector` (`map[int]float32`), even when features were dense. `PredictFloats` converted `[]float32` → map → did map lookups.
+All prediction previously went through `SparseVector` (`map[int]float32`). Even
+`PredictFloats` converted `[]float32` → map → did map lookups.
 
-After: `PredictDense([]float32)` does direct array indexing during tree traversal. Missing values are represented as NaN. No map allocation, no hash computation, no bucket scanning.
+`PredictDense([]float32)` does direct array indexing. Missing = NaN (`fval != fval`).
+No map allocation, no hash computation. This is the single biggest win.
 
-This is the single biggest win — the tree traversal inner loop goes from map lookups (~15-25 ns each with hash + bucket scan) to array indexing (~1 ns).
+### 3. Fused predict loop (restoring original optimization)
 
-### 3. Objective resolved at load time
+The original `OptimizedGBDTClassifier.Predict` fused tree prediction with per-class
+accumulation and sigmoid application in one loop — no intermediate `[]float32` for
+all tree results. The optimization_notes.md documented this as "10-15% speedup and
+99% reduction in memory overhead."
 
-Before: 3 nested `switch` statements on `objective.Name` strings in the prediction hot path, evaluated on every call.
+The initial SoA refactor lost this by allocating `make([]float32, len(trees))` then
+iterating separately. Restoring the fused loop:
 
-After: `resolveObjective()` runs once at model load and returns function pointers (`perScoreFn`, `postProcessFn`) stored on the schema. The prediction loop calls these directly — no string comparisons at inference time.
+```
+SoA Dense (non-fused):  3616 ns/op    840 B/op    4 allocs/op
+SoA Dense (fused):      2792 ns/op      8 B/op    2 allocs/op
+                        -------    ------    ------
+                         23% faster   99% less    50% fewer
+```
 
-### 4. Proper error handling
+This exceeds the originally documented 10-15% because the dense path amplifies the
+benefit — the intermediate allocation was a larger fraction of total cost once map
+overhead was removed.
 
-Replaced `mustNotError()` (panics on bad input) with explicit error returns in `UnmarshalJSON`. A library should never panic on malformed data.
+### 4. Objective resolved at load time
 
-### 5. Dead code removed
+3 nested `switch` statements on `objective.Name` strings → function pointers
+(`perScoreFn`, `postProcessFn`) resolved once at `NewGBDTFromXGBoostJSON` time.
+Also fixes the old `OptimizedGBDTClassifier` bug where it always applied sigmoid.
 
-- `tree.Predict()` that returned `0.0, nil` unconditionally
-- `GBTree.Predict()` (dead after conversion to optimized)
-- `OptimizedGBDTClassifier` (replaced by `XGBoostSchema.PredictDense`)
-- Unused `Leaves []bool` field on `tree`
-- Duplicate `sigmoidSingleOpt` / `sigmoidOpt`
-- `mustNotError` utility
-- Custom `max` generic (Go 1.21 builtin)
-- `github.com/pkg/errors` and `golang.org/x/exp` dependencies
+### 5. Original optimizations preserved
+
+- `rightChild = leftChild + 1` for numerical trees (both layouts)
+- Separate `predictNumerical`/`predictCategorical` outlining (both layouts)
+- `IsLeaf` precomputed at load time (AoS; SoA uses `leftChild < 0`)
+- `node := t.Nodes[idx]` single dereference (AoS)
+
+### 6. Proper error handling + dead code removed
+
+- `mustNotError()` panic → explicit error returns in `UnmarshalJSON`
+- Removed: `tree.Predict()` (returned 0.0), `GBTree.Predict()`, `OptimizedGBDTClassifier`,
+  unused `Leaves` field, duplicate sigmoids, custom `max`, `github.com/pkg/errors`,
+  `golang.org/x/exp`
 
 ## Detailed Numbers
 
 ### Single tree prediction
 
 ```
-BEFORE:
-BenchmarkXGBoostTree-16     35.27 ns/op    0 B/op    0 allocs/op
-
-AFTER:
-BenchmarkXGBoostTree-16       31.47 ns/op    0 B/op    0 allocs/op  (sparse, 11% faster)
-BenchmarkXGBoostTreeDense-16  13.41 ns/op    0 B/op    0 allocs/op  (dense, 62% faster)
+Original:                           35.27 ns/op    0 B/op    0 allocs/op
+SoA sparse:                         31.24 ns/op    0 B/op    0 allocs/op
+SoA dense:                          13.68 ns/op    0 B/op    0 allocs/op
+Compact AoS dense:                  13.04 ns/op    0 B/op    0 allocs/op  ← fastest per-tree
 ```
-
-The dense path is 2.6x faster per tree. Over 100 trees this compounds.
 
 ### Full pipeline — mortgage model (100 trees, binary classification)
 
 ```
-BEFORE:
-BenchmarkXGBoost-16            6505 ns/op    845 B/op    4 allocs/op
-BenchmarkXGBoostOptimized-16   6023 ns/op     12 B/op    2 allocs/op
-
-AFTER:
-BenchmarkXGBoost-16            5721 ns/op    840 B/op    4 allocs/op  (sparse, 12% faster)
-BenchmarkXGBoostDense-16       3616 ns/op    840 B/op    4 allocs/op  (dense, 44% faster than old sparse)
+Original (sparse):                6505 ns/op    845 B/op    4 allocs/op
+Original OptimizedClassifier:     6023 ns/op     12 B/op    2 allocs/op
+SoA sparse:                       5827 ns/op    840 B/op    4 allocs/op
+SoA dense (fused):                2792 ns/op      8 B/op    2 allocs/op  ← fastest ensemble
+Compact AoS dense (fused):        3101 ns/op      8 B/op    2 allocs/op
 ```
-
-Note: the old `BenchmarkXGBoostOptimized` used `OptimizedGBDTClassifier` which skipped
-objective handling (always applied sigmoid regardless of model type). The new dense path
-is 40% faster AND handles objectives correctly.
 
 ### End-to-end with real data (CSV → predict)
 
 ```
-BEFORE:
-BenchmarkXGBEndToEnd-16              8817 ns/op    1674 B/op    6 allocs/op
-BenchmarkXGBEndToEndOptimized-16     8077 ns/op    1209 B/op    4 allocs/op
-
-AFTER:
-BenchmarkXGBEndToEnd-16              7661 ns/op    1660 B/op    6 allocs/op  (sparse, 13% faster)
-BenchmarkXGBEndToEndDense-16         3044 ns/op     420 B/op    2 allocs/op  (dense, 65% faster, 75% less memory)
+Original (sparse):               8817 ns/op   1674 B/op    6 allocs/op
+Original optimized:              8077 ns/op   1209 B/op    4 allocs/op
+SoA sparse:                      7635 ns/op   1660 B/op    6 allocs/op
+SoA dense (fused):               2552 ns/op      4 B/op    1 allocs/op  ← fastest E2E
+Compact AoS dense (fused):       3085 ns/op      4 B/op    1 allocs/op
 ```
-
-The dense end-to-end path eliminates both the `SparseVectorFromArray` map allocation
-and the per-lookup hash overhead. Allocs drop from 6 to 2 (just the tree results slice
-and the per-class score slice).
 
 ### Model loading
 
 ```
-BEFORE:
-BenchmarkLoadXGBoost-16    8,979,216 ns/op    851,980 B/op    6,587 allocs/op
-
-AFTER:
-BenchmarkLoadXGBoost-16    8,583,944 ns/op    690,941 B/op    4,459 allocs/op
+Original:     8,979,216 ns/op    851,980 B/op    6,587 allocs/op
+Refactored:   8,370,042 ns/op    752,182 B/op    4,561 allocs/op
 ```
 
-19% less memory allocated, 32% fewer allocations. The savings come from:
-- Value slices instead of per-node pointer allocations (eliminates ~N allocs per tree)
-- `int32` fields instead of `int` (halves index array memory)
-- Categorical arrays only allocated when needed
+12% less memory, 31% fewer allocations.
 
 ## Benchmarks Removed
 
-The concurrent benchmarks (`BenchmarkXGBoostConcurrent`, `BenchmarkXGBoostTreeConcurrent`,
-`BenchmarkXGBEndToEndConcurrent`, `BenchmarkXGBEndToEndOptimizedConcurrent`) were removed.
-They launched goroutines without synchronization (the guard channel was commented out),
-so the benchmark completed before goroutines finished, producing unreliable numbers.
+The concurrent benchmarks were removed. They launched goroutines without
+synchronization (the guard channel was commented out), producing unreliable numbers.
