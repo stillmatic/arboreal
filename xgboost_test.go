@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"io"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"testing"
@@ -13,8 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// mustNotError is a generic function to get the output of a function that returns
-// a value and an error. If the error is not nil, it will panic.
+// mustNotError is a test helper that panics on error.
 func mustNotError[T any](input T, err error) T {
 	if err != nil {
 		panic(err)
@@ -22,6 +22,7 @@ func mustNotError[T any](input T, err error) T {
 	return input
 }
 
+// Sparse vector used by existing tests.
 var vec = arboreal.SparseVector{
 	0:  2016.0,
 	1:  1.0,
@@ -69,35 +70,39 @@ var vec = arboreal.SparseVector{
 	43: 0.0,
 }
 
+// Dense equivalent for benchmarking the dense path.
+var vecDense = sparseToNaNDense(vec, 44)
+
+// nilVecDense is all-NaN (all features missing), equivalent to empty SparseVector.
+var nilVecDense = makeNaNSlice(44)
+
+func makeNaNSlice(n int) []float32 {
+	s := make([]float32, n)
+	nan := float32(math.NaN())
+	for i := range s {
+		s[i] = nan
+	}
+	return s
+}
+
+func sparseToNaNDense(sv arboreal.SparseVector, n int) []float32 {
+	out := makeNaNSlice(n)
+	for k, v := range sv {
+		if k < n {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func TestXGBoostJson(t *testing.T) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(t, err)
-	// assert.Equal(t, res.Learner.GradientBooster.GetName(), "gbtree")
-	// gb := res.Learner.GradientBooster.(*arboreal.GBTree)
-	// assert.Equal(t, len(gb.Model.Trees), 100)
-	// assert.Equal(t, len(gb.Model.Trees), mustNotError(strconv.Atoi(gb.Model.GbtreeModelParam.NumTrees)))
 
-	// t0 := gb.Model.Trees[0]
-	// treeRes, err := t0.Predict(vec, gb.BaseScore)
-	// assert.NoError(t, err)
-	// t.Log(treeRes)
-
-	// ensembleRes, err := gb.Predict(vec)
-	// assert.NoError(t, err)
-	// t.Log("ensemble values ", ensembleRes)
-
-	// first 5 are [0.9999933 , 0.30979705, 0.9999808 , 0.69328964, 0.6143614 , 0.09738026]
 	finalRes, err := res.Predict(vec)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, finalRes)
 	t.Log("final score ", finalRes)
-
-	// nilVec := make(arboreal.SparseVector, 44)
-	// nullRes, err := res.Predict(&nilVec)
-	// assert.NoError(t, err)
-	// assert.NotEmpty(t, nullRes)
-	// t.Log(nullRes)
-
 }
 
 func TestToy(t *testing.T) {
@@ -196,11 +201,69 @@ func TestSoftprob(t *testing.T) {
 	t.Log(score)
 }
 
+// TestPredictDense verifies that dense prediction matches sparse prediction.
+func TestPredictDense(t *testing.T) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(t, err)
+
+	sparseResult := mustNotError(res.Predict(vec))
+	denseResult := mustNotError(res.PredictDense(vecDense))
+
+	assert.Equal(t, len(sparseResult), len(denseResult))
+	for i := range sparseResult {
+		assert.InDelta(t, sparseResult[i], denseResult[i], 0.0001,
+			"sparse vs dense mismatch at index %d", i)
+	}
+}
+
+func TestPredictDenseRegression(t *testing.T) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/regression.json")
+	assert.NoError(t, err)
+
+	sparseResult := mustNotError(res.Predict(vec))
+	denseResult := mustNotError(res.PredictDense(vecDense))
+
+	for i := range sparseResult {
+		assert.InDelta(t, sparseResult[i], denseResult[i], 0.0001)
+	}
+}
+
+// TestPredictDenseAoS verifies AoS matches SoA dense prediction.
+func TestPredictDenseAoS(t *testing.T) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(t, err)
+
+	soaResult := mustNotError(res.PredictDense(vecDense))
+	aosResult := mustNotError(res.PredictDenseAoS(vecDense))
+
+	assert.Equal(t, len(soaResult), len(aosResult))
+	for i := range soaResult {
+		assert.InDelta(t, soaResult[i], aosResult[i], 0.0001,
+			"SoA vs AoS mismatch at index %d", i)
+	}
+}
+
+func TestPredictDenseAoSRegression(t *testing.T) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/regression.json")
+	assert.NoError(t, err)
+
+	soaResult := mustNotError(res.PredictDense(vecDense))
+	aosResult := mustNotError(res.PredictDenseAoS(vecDense))
+
+	for i := range soaResult {
+		assert.InDelta(t, soaResult[i], aosResult[i], 0.0001)
+	}
+}
+
+// --- Benchmarks ---
+
+// BenchmarkXGBoost benchmarks the full sparse prediction pipeline.
 func BenchmarkXGBoost(b *testing.B) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(b, err)
 
 	nilVec := make(arboreal.SparseVector, 44)
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := res.Predict(vec)
 		assert.NoError(b, err)
@@ -214,69 +277,81 @@ func BenchmarkXGBoostRegression(b *testing.B) {
 	assert.NoError(b, err)
 
 	nilVec := make(arboreal.SparseVector, 44)
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := res.Predict(vec)
 		assert.NoError(b, err)
 		_, err = res.Predict(nilVec)
+		_ = err
 	}
 }
-func BenchmarkXGBoostOptimized(b *testing.B) {
+
+// BenchmarkXGBoostDense benchmarks the dense prediction pipeline (no map lookups).
+func BenchmarkXGBoostDense(b *testing.B) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(b, err)
-	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(res)
 
-	nilVec := make(arboreal.SparseVector, 44)
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := newRes.Predict(vec)
+		_, err := res.PredictDense(vecDense)
 		assert.NoError(b, err)
-		_, err = newRes.Predict(nilVec)
+		_, err = res.PredictDense(nilVecDense)
 		assert.NoError(b, err)
 	}
 }
 
+// BenchmarkXGBoostTree benchmarks a single tree's sparse prediction.
 func BenchmarkXGBoostTree(b *testing.B) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(b, err)
 
-	t0 := res.Learner.GradientBooster.(*arboreal.GBTModelOptimized).Trees[0]
+	booster := res.Learner.GradientBooster.(*arboreal.GBTModelOptimized)
+	t0 := &booster.Trees[0]
 
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		res := t0.Predict(vec)
+		_ = t0.Predict(vec)
+	}
+}
+
+// BenchmarkXGBoostTreeDense benchmarks a single tree with dense input.
+func BenchmarkXGBoostTreeDense(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+
+	booster := res.Learner.GradientBooster.(*arboreal.GBTModelOptimized)
+	t0 := &booster.Trees[0]
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = t0.PredictDense(vecDense)
+	}
+}
+
+// BenchmarkXGBoostDenseAoS benchmarks the AoS dense prediction pipeline.
+func BenchmarkXGBoostDenseAoS(b *testing.B) {
+	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+	assert.NoError(b, err)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := res.PredictDenseAoS(vecDense)
 		assert.NoError(b, err)
-		_ = res
+		_, err = res.PredictDenseAoS(nilVecDense)
+		assert.NoError(b, err)
 	}
 }
 
-func BenchmarkXGBoostTreeConcurrent(b *testing.B) {
+// BenchmarkXGBoostTreeDenseAoS benchmarks a single AoS tree with dense input.
+func BenchmarkXGBoostTreeDenseAoS(b *testing.B) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(b, err)
 
-	t0 := res.Learner.GradientBooster.(*arboreal.GBTModelOptimized).Trees[0]
+	t0 := &res.ModelAoS.Trees[0]
 
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		// guard <- struct{}{}
-		go func(sv arboreal.SparseVector) {
-			res := t0.Predict(vec)
-			assert.NoError(b, err)
-			_ = res
-			// <-guard
-		}(vec)
-	}
-}
-
-func BenchmarkXGBoostConcurrent(b *testing.B) {
-	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
-	assert.NoError(b, err)
-	// maxGoroutines := 32
-	// guard := make(chan struct{}, maxGoroutines)
-	for i := 0; i < b.N; i++ {
-		// guard <- struct{}{}
-		go func(sv arboreal.SparseVector) {
-			_, err := res.Predict(vec)
-			assert.NoError(b, err)
-			// <-guard
-		}(vec)
-
+		_ = t0.PredictDense(vecDense)
 	}
 }
 
@@ -295,7 +370,7 @@ func readCsvFile(filePath string) [][]string {
 	}
 	defer f.Close()
 
-	// Skip first row (line)
+	// Skip first row (header)
 	row1, _ := bufio.NewReader(f).ReadSlice('\n')
 	_, _ = f.Seek(int64(len(row1)), io.SeekStart)
 
@@ -308,12 +383,12 @@ func readCsvFile(filePath string) [][]string {
 	return records
 }
 
+// BenchmarkXGBEndToEnd benchmarks sparse prediction over CSV data.
 func BenchmarkXGBEndToEnd(b *testing.B) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(b, err)
 	inputs := readCsvFile("testdata/mortgage_data.csv")
 	l := len(inputs)
-	// convert inputs to floats
 	floatInputs := make([][]float32, l)
 	for i, input := range inputs {
 		floatInputs[i] = make([]float32, len(input))
@@ -321,18 +396,19 @@ func BenchmarkXGBEndToEnd(b *testing.B) {
 			floatInputs[i][j] = float32(mustNotError(strconv.ParseFloat(v, 32)))
 		}
 	}
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		vec := arboreal.SparseVectorFromArray(floatInputs[i%l])
 		res.Predict(vec)
 	}
 }
 
-func BenchmarkXGBEndToEndConcurrent(b *testing.B) {
+// BenchmarkXGBEndToEndDense benchmarks dense prediction over CSV data (no SparseVector).
+func BenchmarkXGBEndToEndDense(b *testing.B) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(b, err)
 	inputs := readCsvFile("testdata/mortgage_data.csv")
 	l := len(inputs)
-	// convert inputs to floats
 	floatInputs := make([][]float32, l)
 	for i, input := range inputs {
 		floatInputs[i] = make([]float32, len(input))
@@ -340,21 +416,18 @@ func BenchmarkXGBEndToEndConcurrent(b *testing.B) {
 			floatInputs[i][j] = float32(mustNotError(strconv.ParseFloat(v, 32)))
 		}
 	}
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		go func(i int) {
-			vec := arboreal.SparseVectorFromArray(floatInputs[i%l])
-			res.Predict(vec)
-		}(i)
+		res.PredictDense(floatInputs[i%l])
 	}
 }
 
-func BenchmarkXGBEndToEndOptimized(b *testing.B) {
+// BenchmarkXGBEndToEndDenseAoS benchmarks AoS dense prediction over CSV data.
+func BenchmarkXGBEndToEndDenseAoS(b *testing.B) {
 	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(b, err)
 	inputs := readCsvFile("testdata/mortgage_data.csv")
 	l := len(inputs)
-	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(res)
-	// convert inputs to floats
 	floatInputs := make([][]float32, l)
 	for i, input := range inputs {
 		floatInputs[i] = make([]float32, len(input))
@@ -362,29 +435,8 @@ func BenchmarkXGBEndToEndOptimized(b *testing.B) {
 			floatInputs[i][j] = float32(mustNotError(strconv.ParseFloat(v, 32)))
 		}
 	}
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		newRes.PredictFloats(floatInputs[i%l])
-	}
-}
-
-func BenchmarkXGBEndToEndOptimizedConcurrent(b *testing.B) {
-	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
-	assert.NoError(b, err)
-	inputs := readCsvFile("testdata/mortgage_data.csv")
-	l := len(inputs)
-	// convert inputs to floats
-	floatInputs := make([][]float32, l)
-	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(res)
-
-	for i, input := range inputs {
-		floatInputs[i] = make([]float32, len(input))
-		for j, v := range input {
-			floatInputs[i][j] = float32(mustNotError(strconv.ParseFloat(v, 32)))
-		}
-	}
-	for i := 0; i < b.N; i++ {
-		go func(i int) {
-			newRes.PredictFloats(floatInputs[i%l])
-		}(i)
+		res.PredictDenseAoS(floatInputs[i%l])
 	}
 }

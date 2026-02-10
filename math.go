@@ -1,21 +1,8 @@
 package arboreal
 
-import (
-	math "github.com/chewxy/math32"
-	"golang.org/x/exp/constraints"
-)
+import math "github.com/chewxy/math32"
 
-func max[T constraints.Ordered](a, b T) T {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func sigmoidSingle(x float32) float32 {
-	return 1.0 / (1.0 + math.Exp(-x))
-}
-
+// Softmax applies the softmax function to a slice of scores.
 func Softmax(ys []float32) []float32 {
 	output := make([]float32, len(ys))
 	var sum float32
