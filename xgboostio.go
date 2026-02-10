@@ -6,14 +6,11 @@ package arboreal
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
-
-	// "github.com/goccy/go-json"
-
-	"github.com/pkg/errors"
 )
 
-// UnmarshalJSON is a custom JSON unmarshal for learner
+// UnmarshalJSON is a custom JSON unmarshal for learner.
 func (l *learner) UnmarshalJSON(b []byte) error {
 	var tmp struct {
 		FeatureNames      []featureName     `json:"feature_names,omitempty"`
@@ -28,14 +25,15 @@ func (l *learner) UnmarshalJSON(b []byte) error {
 	l.FeatureNames = tmp.FeatureNames
 	l.FeatureTypes = tmp.FeatureTypes
 	l.LearnerModelParam = tmp.LearnerModelParam
+
 	var err error
 	l.GradientBooster, err = parseGradientBooster(tmp.GradientBooster)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse gradient booster")
+		return fmt.Errorf("failed to parse gradient booster: %w", err)
 	}
 	l.Objective, err = parseObjective(tmp.Objective)
 	if err != nil {
-		return errors.Wrapf(err, "failed to parse objective")
+		return fmt.Errorf("failed to parse objective: %w", err)
 	}
 	return nil
 }
@@ -62,10 +60,11 @@ func parseGradientBooster(msg json.RawMessage) (GradientBooster, error) {
 		}
 		return &gblinear, nil
 	}
-	return nil, nil
+	return nil, fmt.Errorf("unknown gradient booster: %s", tmp.Name)
 }
 
-// custom JSON unmarshal for LearnerModelParam
+// UnmarshalJSON for learnerModelParam handles the string-to-number conversion
+// that XGBoost's JSON format requires.
 func (l *learnerModelParam) UnmarshalJSON(b []byte) error {
 	var tmp struct {
 		BaseScore  string `json:"base_score,omitempty"`
@@ -75,15 +74,35 @@ func (l *learnerModelParam) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &tmp); err != nil {
 		return err
 	}
-	l.BaseScore = float32(mustNotError(strconv.ParseFloat(tmp.BaseScore, 64)))
-	l.NumClass = mustNotError(strconv.Atoi(tmp.NumClass))
-	l.NumFeature = mustNotError(strconv.Atoi(tmp.NumFeature))
+
+	if tmp.BaseScore != "" {
+		bs, err := strconv.ParseFloat(tmp.BaseScore, 64)
+		if err != nil {
+			return fmt.Errorf("invalid base_score %q: %w", tmp.BaseScore, err)
+		}
+		l.BaseScore = float32(bs)
+	}
+	if tmp.NumClass != "" {
+		nc, err := strconv.Atoi(tmp.NumClass)
+		if err != nil {
+			return fmt.Errorf("invalid num_class %q: %w", tmp.NumClass, err)
+		}
+		l.NumClass = nc
+	}
+	if tmp.NumFeature != "" {
+		nf, err := strconv.Atoi(tmp.NumFeature)
+		if err != nil {
+			return fmt.Errorf("invalid num_feature %q: %w", tmp.NumFeature, err)
+		}
+		l.NumFeature = nf
+	}
 	return nil
 }
 
+// OptimizedGBTModel converts a parsed model to the SoA optimized representation.
 func OptimizedGBTModel(in *model) *GBTModelOptimized {
 	out := &GBTModelOptimized{
-		Trees: make([]*TreeOptimized, len(in.Trees)),
+		Trees: make([]TreeOptimized, len(in.Trees)),
 	}
 	for idx, tree := range in.Trees {
 		out.Trees[idx] = OptimizedTree(tree)
@@ -91,52 +110,61 @@ func OptimizedGBTModel(in *model) *GBTModelOptimized {
 	return out
 }
 
-func OptimizedTree(in *tree) *TreeOptimized {
-	out := &TreeOptimized{}
-	nodes := make([]*NodeOptimized, len(in.LeftChildren))
-	for i := range nodes {
-		nodes[i] = &NodeOptimized{
-			DefaultLeft:    in.DefaultLeft[i] == 1,
-			LeftChild:      in.LeftChildren[i],
-			RightChild:     in.RightChildren[i],
-			SplitCondition: in.SplitConditions[i],
-			SplitIndex:     in.SplitIndices[i],
-			SplitType:      in.SplitType[i],
-			// saves a lookup
-			IsLeaf: (in.LeftChildren[i] == -1) && (in.RightChildren[i] == -1),
-		}
-		if len(in.CategoriesSizes) > 0 {
-			nodes[i].CategoricalSize = in.CategoriesSizes[i]
-			nodes[i].Category = in.Categories[i]
-			nodes[i].CategoriesNode = in.CategoriesNodes[i]
-			nodes[i].CategoriesSegment = in.CategoriesSegments[i]
+// OptimizedTree converts a single parsed tree to SoA layout.
+func OptimizedTree(in *tree) TreeOptimized {
+	n := len(in.LeftChildren)
+	out := TreeOptimized{
+		LeftChild:      make([]int32, n),
+		RightChild:     make([]int32, n),
+		SplitIndex:     make([]int32, n),
+		SplitCondition: in.SplitConditions, // reuse the slice directly
+		DefaultLeft:    make([]bool, n),
+	}
+
+	hasCategorical := false
+	for i := 0; i < n; i++ {
+		out.LeftChild[i] = int32(in.LeftChildren[i])
+		out.RightChild[i] = int32(in.RightChildren[i])
+		out.SplitIndex[i] = int32(in.SplitIndices[i])
+		out.DefaultLeft[i] = in.DefaultLeft[i] == 1
+		if len(in.SplitType) > i && in.SplitType[i] == 1 {
+			hasCategorical = true
 		}
 	}
-	out.Nodes = nodes
+
+	out.HasCategorical = hasCategorical
+	if hasCategorical {
+		out.SplitType = make([]uint8, n)
+		out.Category = make([]int32, n)
+		for i := 0; i < n; i++ {
+			if len(in.SplitType) > i {
+				out.SplitType[i] = uint8(in.SplitType[i])
+			}
+			if len(in.Categories) > i {
+				out.Category[i] = int32(in.Categories[i])
+			}
+		}
+	}
+
 	return out
 }
 
+// Objective holds the parsed objective function metadata.
 type Objective struct {
-	Name   string `json:"name"`
-	Params map[string]interface{}
+	Name   string
+	Params map[string]string
 }
 
 func parseObjective(msg json.RawMessage) (Objective, error) {
 	var tmp struct {
-		Name          string      `json:"name"`
-		RegLossParams interface{} `json:"reg_loss_param"`
+		Name          string            `json:"name"`
+		RegLossParam  map[string]string `json:"reg_loss_param"`
 	}
-	err := json.Unmarshal(msg, &tmp)
-	if err != nil {
+	if err := json.Unmarshal(msg, &tmp); err != nil {
 		return Objective{}, err
-	}
-	// TODO: this might be a map[string]string
-	var params map[string]interface{}
-	if tmp.RegLossParams != nil {
-		params = tmp.RegLossParams.(map[string]interface{})
 	}
 	return Objective{
 		Name:   tmp.Name,
-		Params: params,
+		Params: tmp.RegLossParam,
 	}, nil
 }

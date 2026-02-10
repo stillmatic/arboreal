@@ -16,12 +16,11 @@ func TestXGBoostSchema_Predict(t *testing.T) {
 	assert.InDelta(t, 6.245257, res[0], 0.000001)
 }
 
-func TestOptimizedGBTModel(t *testing.T) {
-	res, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
+func TestPredictDenseExample(t *testing.T) {
+	schema, err := arboreal.NewGBDTFromXGBoostJSON("testdata/mortgage_xgb.json")
 	assert.NoError(t, err)
-	newRes := arboreal.NewOptimizedGBDTClassifierFromSchema(res)
 
-	vec := make(arboreal.SparseVector, 44)
-	_, err = newRes.Predict(vec)
+	nilVec := make(arboreal.SparseVector, 44)
+	_, err = schema.Predict(nilVec)
 	assert.NoError(t, err)
 }

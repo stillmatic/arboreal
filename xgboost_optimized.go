@@ -2,86 +2,23 @@ package arboreal
 
 import math "github.com/chewxy/math32"
 
-type OptimizedGBDTClassifier struct {
-	Model      *GBTModelOptimized
-	NumClasses int
-}
-
-func NewOptimizedGBDTClassifierFromSchema(model *XGBoostSchema) OptimizedGBDTClassifier {
-	origModel := model.Learner.GradientBooster.(*GBTModelOptimized)
-	return OptimizedGBDTClassifier{
-		Model:      origModel,
-		NumClasses: model.Learner.LearnerModelParam.NumClass,
-	}
-}
-
-func sigmoidOpt(x *[]float32) []float32 {
-	for i, v := range *x {
-		val := sigmoidSingleOpt(v)
-		(*x)[i] = val
-	}
-	return *x
-}
-
-func sigmoidSingleOpt(x float32) float32 {
-	return 1.0 / (1.0 + math.Exp(-x))
-}
-
-func (m *OptimizedGBDTClassifier) Predict(features SparseVector) ([]float32, error) {
-	numClasses := max(m.NumClasses, 1)
-	treesPerClass := len(m.Model.Trees) / numClasses
-	perClassScore := make([]float32, numClasses)
-	for i := 0; i < numClasses; i++ {
-		offset := i * treesPerClass
-		for j := 0; j < treesPerClass; j++ {
-			perClassScore[i] += m.Model.Trees[offset+j].Predict(features)
-		}
-		perClassScore[i] = sigmoidSingleOpt(perClassScore[i])
-	}
-	// TODO: handle objective
-	return perClassScore, nil
-}
-
-func (m *OptimizedGBDTClassifier) PredictFloats(features []float32) ([]float32, error) {
-	sv := make(SparseVector, len(features))
-	for i, v := range features {
-		sv[i] = v
-	}
-
-	numClasses := max(m.NumClasses, 1)
-	treesPerClass := len(m.Model.Trees) / numClasses
-	perClassScore := make([]float32, numClasses)
-	for i := 0; i < numClasses; i++ {
-		offset := (i * treesPerClass)
-		for j := 0; j < treesPerClass; j++ {
-			perClassScore[i] += m.Model.Trees[offset+j].Predict(sv)
-		}
-		perClassScore[i] = sigmoidSingleOpt(perClassScore[i])
-	}
-	// TODO: handle objective
-	return perClassScore, nil
-}
-
-type GBTModelOptimized struct {
-	Trees []*TreeOptimized `json:"trees"`
-}
-
+// TreeOptimized uses a struct-of-arrays layout for cache-friendly tree traversal.
+// Each field is a contiguous slice indexed by node ID. Numerical-only trees use
+// the fast path (predictNumerical); trees with any categorical splits use predictMixed.
 type TreeOptimized struct {
-	Nodes []*NodeOptimized
+	LeftChild      []int32
+	RightChild     []int32
+	SplitIndex     []int32
+	SplitCondition []float32
+	DefaultLeft    []bool
+	SplitType      []uint8 // 0=numerical, 1=categorical
+	Category       []int32
+	HasCategorical bool
 }
 
-type NodeOptimized struct {
-	CategoricalSize   int
-	Category          int
-	CategoriesNode    int
-	CategoriesSegment int
-	LeftChild         int
-	RightChild        int
-	SplitIndex        int
-	SplitType         int
-	SplitCondition    float32
-	DefaultLeft       bool
-	IsLeaf            bool
+// GBTModelOptimized holds the ensemble of optimized trees.
+type GBTModelOptimized struct {
+	Trees []TreeOptimized
 }
 
 func (m *GBTModelOptimized) GetName() string {
@@ -90,93 +27,195 @@ func (m *GBTModelOptimized) GetName() string {
 
 func (m *GBTModelOptimized) Predict(features SparseVector) ([]float32, error) {
 	result := make([]float32, len(m.Trees))
-
-	for idx, tree := range m.Trees {
-		res := tree.Predict(features)
-		result[idx] = res
+	for idx := range m.Trees {
+		result[idx] = m.Trees[idx].Predict(features)
 	}
 	return result, nil
 }
 
-func (t *TreeOptimized) predictCategorical(features SparseVector) float32 {
-	idx := 0
-
-	for {
-		node := t.Nodes[idx]
-		if node.IsLeaf {
-			// splitConditions[idx] is return value for a leaf node
-			return node.SplitCondition
-		}
-
-		leftChild := node.LeftChild
-		// We don't need to do the insane optimization here, as
-		// the optimized version already takes advantage of cache locality
-		// rightChild := leftChild + 1
-		rightChild := node.RightChild
-
-		splitCol := node.SplitIndex
-		// splitVal := node.SplitCondition
-		fval, ok := features[splitCol]
-
-		// missing value behavior is determined by default left
-		if !ok {
-			if node.DefaultLeft {
-				idx = leftChild
-			} else {
-				idx = rightChild
-			}
-			continue
-		}
-		// todo: doublecheck this
-		if int(fval) == node.Category {
-			idx = rightChild
-		} else {
-			idx = leftChild
-		}
+// PredictDense predicts using a dense feature vector. Missing values are
+// represented as NaN. This is the fast path — no map lookups.
+func (m *GBTModelOptimized) PredictDense(features []float32) []float32 {
+	result := make([]float32, len(m.Trees))
+	for idx := range m.Trees {
+		result[idx] = m.Trees[idx].PredictDense(features)
 	}
+	return result
 }
 
-func (t *TreeOptimized) predictNumerical(features SparseVector) float32 {
-	idx := 0
-	for {
-		node := t.Nodes[idx]
-		if node.IsLeaf {
-			// splitConditions[idx] is return value for a leaf node
-			return node.SplitCondition
-		}
-
-		leftChild := node.LeftChild
-		// We don't need to do the insane optimization here, as
-		// the optimized version already takes advantage of cache locality
-		rightChild := leftChild + 1
-		// rightChild := node.RightChild
-
-		splitCol := node.SplitIndex
-		splitVal := node.SplitCondition
-		fval, ok := features[splitCol]
-
-		// missing value behavior is determined by default left
-		if !ok {
-			if node.DefaultLeft {
-				idx = leftChild
-			} else {
-				idx = rightChild
-			}
-			continue
-		}
-		// xgboost uses <, lightgbm uses <=
-		if fval < splitVal {
-			idx = leftChild
-		} else {
-			idx = rightChild
-		}
-	}
-}
-
+// Predict dispatches to the appropriate traversal method using SparseVector input.
 func (t *TreeOptimized) Predict(features SparseVector) float32 {
-	if t.Nodes[0].SplitType == 1 {
-		return t.predictCategorical(features)
-	} else {
-		return t.predictNumerical(features)
+	if t.HasCategorical {
+		return t.predictMixedSparse(features)
 	}
+	return t.predictNumericalSparse(features)
+}
+
+// PredictDense dispatches using a dense []float32 slice. Missing = NaN.
+func (t *TreeOptimized) PredictDense(features []float32) float32 {
+	if t.HasCategorical {
+		return t.predictMixedDense(features)
+	}
+	return t.predictNumericalDense(features)
+}
+
+// predictNumericalDense is the hot path for numerical-only trees with dense input.
+func (t *TreeOptimized) predictNumericalDense(features []float32) float32 {
+	idx := 0
+	nFeatures := int32(len(features))
+	for {
+		leftChild := t.LeftChild[idx]
+		if leftChild < 0 { // leaf
+			return t.SplitCondition[idx]
+		}
+
+		splitCol := t.SplitIndex[idx]
+
+		if splitCol >= nFeatures {
+			// out of bounds = missing
+			if t.DefaultLeft[idx] {
+				idx = int(leftChild)
+			} else {
+				idx = int(leftChild) + 1
+			}
+			continue
+		}
+
+		fval := features[splitCol]
+
+		// NaN = missing
+		if fval != fval {
+			if t.DefaultLeft[idx] {
+				idx = int(leftChild)
+			} else {
+				idx = int(leftChild) + 1
+			}
+			continue
+		}
+
+		// xgboost uses <
+		if fval < t.SplitCondition[idx] {
+			idx = int(leftChild)
+		} else {
+			idx = int(leftChild) + 1
+		}
+	}
+}
+
+// predictNumericalSparse handles numerical-only trees with sparse map input.
+func (t *TreeOptimized) predictNumericalSparse(features SparseVector) float32 {
+	idx := 0
+	for {
+		leftChild := t.LeftChild[idx]
+		if leftChild < 0 { // leaf
+			return t.SplitCondition[idx]
+		}
+
+		splitCol := t.SplitIndex[idx]
+		fval, ok := features[int(splitCol)]
+
+		if !ok {
+			if t.DefaultLeft[idx] {
+				idx = int(leftChild)
+			} else {
+				idx = int(leftChild) + 1
+			}
+			continue
+		}
+
+		if fval < t.SplitCondition[idx] {
+			idx = int(leftChild)
+		} else {
+			idx = int(leftChild) + 1
+		}
+	}
+}
+
+// predictMixedDense handles trees with categorical splits and dense input.
+func (t *TreeOptimized) predictMixedDense(features []float32) float32 {
+	idx := 0
+	nFeatures := int32(len(features))
+	for {
+		leftChild := t.LeftChild[idx]
+		if leftChild < 0 { // leaf
+			return t.SplitCondition[idx]
+		}
+
+		splitCol := t.SplitIndex[idx]
+
+		if splitCol >= nFeatures {
+			if t.DefaultLeft[idx] {
+				idx = int(leftChild)
+			} else {
+				idx = int(t.RightChild[idx])
+			}
+			continue
+		}
+
+		fval := features[splitCol]
+
+		if fval != fval { // NaN = missing
+			if t.DefaultLeft[idx] {
+				idx = int(leftChild)
+			} else {
+				idx = int(t.RightChild[idx])
+			}
+			continue
+		}
+
+		if t.SplitType[idx] == 1 {
+			if int32(fval) == t.Category[idx] {
+				idx = int(t.RightChild[idx])
+			} else {
+				idx = int(leftChild)
+			}
+		} else {
+			if fval < t.SplitCondition[idx] {
+				idx = int(leftChild)
+			} else {
+				idx = int(t.RightChild[idx])
+			}
+		}
+	}
+}
+
+// predictMixedSparse handles trees with categorical splits and sparse map input.
+func (t *TreeOptimized) predictMixedSparse(features SparseVector) float32 {
+	idx := 0
+	for {
+		leftChild := t.LeftChild[idx]
+		if leftChild < 0 { // leaf
+			return t.SplitCondition[idx]
+		}
+
+		splitCol := t.SplitIndex[idx]
+		fval, ok := features[int(splitCol)]
+
+		if !ok {
+			if t.DefaultLeft[idx] {
+				idx = int(leftChild)
+			} else {
+				idx = int(t.RightChild[idx])
+			}
+			continue
+		}
+
+		if t.SplitType[idx] == 1 {
+			if int32(fval) == t.Category[idx] {
+				idx = int(t.RightChild[idx])
+			} else {
+				idx = int(leftChild)
+			}
+		} else {
+			if fval < t.SplitCondition[idx] {
+				idx = int(leftChild)
+			} else {
+				idx = int(t.RightChild[idx])
+			}
+		}
+	}
+}
+
+func sigmoidSingle(x float32) float32 {
+	return 1.0 / (1.0 + math.Exp(-x))
 }
