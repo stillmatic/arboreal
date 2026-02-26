@@ -5,7 +5,7 @@ go 1.21
 require (
 	github.com/chewxy/math32 v1.11.0
 	github.com/stretchr/testify v1.9.0
-	github.com/viterin/vek v0.4.2
+	github.com/viterin/vek v0.4.3
 )
 
 require (
